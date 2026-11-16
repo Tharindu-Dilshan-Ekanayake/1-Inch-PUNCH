@@ -22,6 +22,14 @@ export const runtime = {
     anim: 'idle',
     /** Set when the controller should ignore input (while your tire rolls). */
     frozen: false,
+    /** A punch charging in your right glove (0-1), lighting it up (roll/FistCharge.jsx). */
+    charge: 0,
+    /** Your last click punch (performance.now()) and its fist: 0 the left jab, 1 the right cross. */
+    strikeAt: -Infinity,
+    strikeSide: 1,
+    /** Your last punch at a training bag (performance.now(), when it started) and which of the combo it is. */
+    bagPunchAt: -Infinity,
+    bagCombo: 0,
   },
 
   /** Touch input, written by the on-screen joystick. -1..1, +y = forward. */
@@ -55,6 +63,9 @@ export const runtime = {
    * `{ distance, duration, blocked, tireId, x, z, startedAt }`.
    */
   ghostRolls: new Map(),
+
+  /** performance.now() each training bag (by pad index) was last punched by you. */
+  bagHits: [],
 
   /** Walls that come and go at runtime, e.g. locked pads. */
   dynamicColliders: [],

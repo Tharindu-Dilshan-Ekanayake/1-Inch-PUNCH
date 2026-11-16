@@ -4,6 +4,7 @@ import { Vector3 } from 'three'
 import { formatGain } from '@shared/format'
 
 import { sfx } from '../../audio/sfx'
+import { BAG_LAND_S } from '../playerPose'
 import { iconUrl } from '../../ui/icons'
 import { runtime } from '../runtime'
 import { roll } from '../roll/rollControl'
@@ -27,7 +28,9 @@ function showGain(event) {
     _at.set(at.x + (Math.random() - 0.5) * 3, at.y + 0.8 + Math.random() * 1.2, at.z + (Math.random() - 0.5) * 1.5)
     spawnPopup(`+${formatGain(event.gain)}`, _at, { iconUrl: HEART_ICON })
   }
-  sfx.gain(event.source !== 'pad')
+  // Training: the bag's thwack. Anything else: a soft tick.
+  if (event.source === 'pad') sfx.bagHit(BAG_LAND_S)
+  else sfx.gain(true)
   if (event.leveledUp) {
     _at.set(at.x, at.y + 2.8, at.z)
     const text = event.maxed ? 'MAX LEVEL!' : event.levels > 1 ? `LEVEL UP! x${event.levels}` : 'LEVEL UP!'

@@ -33,6 +33,8 @@ const PALETTES = {
   power: ['#ffd84a', '#ffa21c', '#ffffff'].map((c) => new Color(c)),
   /** Splinters and sawdust from a smashed wooden wall. */
   wood: ['#c98f52', '#a8743f', '#e8c48a', '#8a5a32', '#fff3d6'].map((c) => new Color(c)),
+  /** Dust kicked off the floor by a punch's footwork. */
+  dust: ['#f4ead2', '#e2d6b8', '#ffffff', '#d8cba8'].map((c) => new Color(c)),
 }
 
 /**

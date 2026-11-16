@@ -157,30 +157,24 @@ const heart = svg(
 )
 
 /**
- * A rubber arm at full stretch: a long pink arm snaking up from the bottom left, ringed
- * like a rubber band, ending in a big golden fist, with speed marks where it's pulled -
- * in a thick ink outline. Still named `tire`, so every place that showed the template's
- * tire (the LAUNCH button, the shop, the passes, the loading screen) shows the arm.
+ * A red boxing glove punching up and to the right, white cuff and lace, a shine on the
+ * knuckles and speed marks behind it - in a thick ink outline. Still named `tire`, so
+ * every place that showed the template's tire (the PUNCH button's pass, the shop, the
+ * passes, the loading screen) shows the glove.
  */
-const STRETCH = 'M16 88C20 62 50 72 48 50S60 32 66 31'
 const tire = svg(
-  `<path d="${STRETCH}" fill="none" stroke="${OUT}" stroke-width="25" stroke-linecap="round"/>
-  <path d="${STRETCH}" fill="none" stroke="url(#ar-g)" stroke-width="15" stroke-linecap="round"/>
-  <path d="${STRETCH}" fill="none" stroke="#fff" stroke-width="15" stroke-dasharray="4 10" opacity=".5"/>
-  <circle cx="73" cy="27" r="17" fill="url(#ar-f)" stroke="${OUT}" stroke-width="6"/>
-  <path d="M66 12l3 8M74 10v10M82 12l-3 8" fill="none" stroke="${OUT}" stroke-width="3.5" stroke-linecap="round"/>
-  <path d="M61 20q2-6 6-8" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" opacity=".85"/>
-  <path d="M6 60l10 4M7 73l10 1M30 94l3-9" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M6 60l10 4M7 73l10 1M30 94l3-9" stroke="${OUT}" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>`,
+  `<path d="M10 66l12 3M8 80l12-1M22 92l6-9" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M10 66l12 3M8 80l12-1M22 92l6-9" stroke="${OUT}" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+  <path d="M30 70l14 14 10-10-14-14z" fill="#f4f6fa" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M36 62C30 46 40 26 58 18s34-2 36 16c2 14-6 28-20 34-10 4-22 6-30 2z" fill="url(#ar-g)" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M40 46c-6-2-10 6-6 12 4 5 10 4 14 0" fill="url(#ar-g)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M60 26q12-6 22 2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".85"/>
+  <path d="M41 70l9-9" stroke="#2f7bff" stroke-width="4" stroke-linecap="round"/>`,
   vgrad('ar-g', [
-    [0, '#ffa3dc'],
-    [1, '#e2318c'],
-  ]) +
-    vgrad('ar-f', [
-      [0, '#fff0a0'],
-      [0.5, '#ffcf2e'],
-      [1, '#f08c00'],
-    ]),
+    [0, '#ff8a7a'],
+    [0.5, '#ff3b3b'],
+    [1, '#c81e2a'],
+  ]),
 )
 
 /** A round potion flask with a cork, filled with `liquid` and a small badge icon. */

@@ -54,6 +54,8 @@ export const useGame = create((set, get) => ({
   toast: null,
   /** Active hatch animation: { eggId, pets }. */
   hatch: null,
+  /** A hidden technique's cut-in playing: { id (SECRET_PUNCHES), at }. */
+  secretCutIn: null,
   /** Keep hatching the egg you're standing at (the T button). Client-side only. */
   autoHatch: false,
 
@@ -91,6 +93,7 @@ export const useGame = create((set, get) => ({
   showToast: (text) => set({ toast: { text, id: Date.now() } }),
 
   setHatch: (hatch) => set({ hatch }),
+  showSecret: (id) => set({ secretCutIn: id ? { id, at: Date.now() } : null }),
   setAutoHatch: (autoHatch) => set({ autoHatch }),
 }))
 

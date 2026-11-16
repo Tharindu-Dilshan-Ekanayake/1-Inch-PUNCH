@@ -9,7 +9,7 @@ import { u } from './style'
 
 const gradeOf = (id) => HIT_GRADES.find((g) => g.id === id)
 const bonusOf = (id) => gradeOf(id).bonus
-/** "+20% DISTANCE": how much further than a plain launch a grade's best launch flies. */
+/** "+20% DISTANCE": how much further than a plain punch a grade's best punch smashes. */
 const extraDistance = (id) => `+${Math.round((gradeOf(id).reach[1] - 1) * 100)}% DISTANCE`
 
 /**
@@ -20,33 +20,33 @@ const CARDS = [
   {
     id: 'good',
     title: 'GOOD!',
-    size: 150,
+    size: 100,
     gradient: 'linear-gradient(180deg, #ffffff 0%, #fffbe0 40%, #ffe27a 70%, #ffb21e 100%)',
     rays: null,
     stars: 4,
-    badges: [['NICE FLING!', 'linear-gradient(180deg, #ffffff 0%, #ffe27a 100%)']],
+    badges: [['NICE PUNCH!', 'linear-gradient(180deg, #ffffff 0%, #ffe27a 100%)']],
   },
   {
     id: 'great',
     title: 'GREAT!',
-    size: 175,
+    size: 116,
     gradient: 'linear-gradient(180deg, #ffffff 0%, #c8f6ff 30%, #5fd6ff 60%, #2f6fe0 100%)',
     rays: 'rgba(95, 214, 255, 0.45)',
     stars: 6,
     badges: [
-      [`STRONG FLING ${extraDistance('great')}`, 'linear-gradient(180deg, #8affc8 0%, #2fd0ff 100%)'],
+      [`STRONG PUNCH ${extraDistance('great')}`, 'linear-gradient(180deg, #8affc8 0%, #2fd0ff 100%)'],
       [`x${bonusOf('great')} WINS`, 'linear-gradient(180deg, #fff27a 0%, #ffb21e 100%)'],
     ],
   },
   {
     id: 'perfect',
     title: 'PERFECT!',
-    size: 200,
+    size: 132,
     gradient: 'linear-gradient(180deg, #ffffff 0%, #fff27a 30%, #ffc21f 55%, #ff6a1e 100%)',
     rays: 'rgba(255, 214, 60, 0.5)',
     stars: 8,
     badges: [
-      [`MEGA FLING ${extraDistance('perfect')}`, 'linear-gradient(180deg, #ff9a3a 0%, #ff3b3b 100%)'],
+      [`MEGA PUNCH ${extraDistance('perfect')}`, 'linear-gradient(180deg, #ff9a3a 0%, #ff3b3b 100%)'],
       [`x${bonusOf('perfect')} WINS`, 'linear-gradient(180deg, #fff27a 0%, #ffb21e 100%)'],
     ],
   },
@@ -91,10 +91,10 @@ function Card({ card }) {
             {card.title}
           </StrokeText>
         </div>
-        <div className="flex" style={{ gap: u(26), marginTop: u(18) }}>
+        <div className="flex" style={{ gap: u(20), marginTop: u(10) }}>
           {card.badges.map(([text, gradient], i) => (
-            <span key={text} className={`pp-perfect-badge pp-perfect-badge-${i + 1}`} style={{ fontSize: u(46) }}>
-              <StrokeText stroke={u(10)} gradient={gradient}>
+            <span key={text} className={`pp-perfect-badge pp-perfect-badge-${i + 1}`} style={{ fontSize: u(32) }}>
+              <StrokeText stroke={u(8)} gradient={gradient}>
                 {text}
               </StrokeText>
             </span>

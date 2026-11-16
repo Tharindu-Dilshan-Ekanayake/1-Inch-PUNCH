@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
+  DoubleSide,
   Euler,
   LinearMipmapLinearFilter,
   MeshBasicMaterial,
@@ -10,7 +11,7 @@ import {
   Vector3,
 } from 'three'
 
-import { LAUNCH_STAND, MAX_PULL, ROLL_ZONE, SHOP_SIGN, SHOP_SIGN_FACING } from '@shared/world'
+import { DOJO_WALL_X, NOBORI, PAD_COUNT, padCenterZ, ROLL_ZONE, SHOP_SIGN, SHOP_SIGN_FACING } from '@shared/world'
 
 import { venueOf } from '../sceneStyle'
 import { DECAL_Y, DIGIT, DIRECTIONS, END_ZONE_TEXT, LOGO, yardNumbers } from './pitch'
@@ -19,7 +20,6 @@ import { ARCH_SIGN } from './rollZone'
 const FONT = '"Fredoka One", "Arial Rounded MT Bold", sans-serif'
 
 const GOLD = ['#fffbd0', '#ffd21f', '#ff8a00']
-const NAVY = ['#5a6cb0', '#1a2a66', '#0a1232']
 const WHITE = ['#ffffff', '#ffffff', '#e6ecf5']
 
 /**
@@ -161,42 +161,54 @@ function paintLogo(ctx, [rx, ry, size], logo) {
     ctx.fill()
     ctx.restore()
   }
-  // The emblem: a rubber arm at full stretch snaking up to a big golden fist (the same
-  // art as the game's icon, ui/icons.js), ringed like a rubber band.
+  // The emblem: a red boxing glove punching up and to the right (the same art as the
+  // game's icon, ui/icons.js), white cuff, a shine on the knuckles, speed marks behind.
   ctx.save()
   const k = (size * 0.5) / 100
   ctx.translate(cx - 50 * k, cy - 52 * k)
   ctx.scale(k, k)
-  const arm = new Path2D('M16 88C20 62 50 72 48 50S60 32 66 31')
   ctx.lineCap = 'round'
-  ctx.strokeStyle = '#1b1b1f'
-  ctx.lineWidth = 25
-  ctx.stroke(arm)
-  ctx.strokeStyle = '#ff6ab8'
-  ctx.lineWidth = 15
-  ctx.stroke(arm)
-  ctx.setLineDash([4, 10])
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)'
-  ctx.stroke(arm)
-  ctx.setLineDash([])
-  ctx.beginPath()
-  ctx.arc(73, 27, 17, 0, Math.PI * 2)
-  ctx.fillStyle = '#ffcf2e'
-  ctx.fill()
-  ctx.lineWidth = 6
-  ctx.strokeStyle = '#1b1b1f'
-  ctx.stroke()
-  ctx.lineWidth = 3.5
-  ctx.beginPath()
-  // The gaps between the curled fingers, along the top of the fist.
-  for (const [x0, y0, x1, y1] of [[66, 12, 69, 20], [74, 10, 74, 20], [82, 12, 79, 20]]) {
+  ctx.lineJoin = 'round'
+  const ink = '#1b1b1f'
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 5
+  for (const [x0, y0, x1, y1] of [[10, 66, 22, 69], [8, 80, 20, 79], [22, 92, 28, 83]]) {
+    ctx.beginPath()
     ctx.moveTo(x0, y0)
     ctx.lineTo(x1, y1)
+    ctx.stroke()
   }
+  const cuff = new Path2D('M30 70l14 14 10-10-14-14z')
+  ctx.fillStyle = '#f4f6fa'
+  ctx.fill(cuff)
+  ctx.strokeStyle = ink
+  ctx.lineWidth = 6
+  ctx.stroke(cuff)
+  const fist = new Path2D('M36 62C30 46 40 26 58 18s34-2 36 16c2 14-6 28-20 34-10 4-22 6-30 2z')
+  const red = ctx.createLinearGradient(0, 14, 0, 74)
+  red.addColorStop(0, '#ff8a7a')
+  red.addColorStop(0.5, '#ff3b3b')
+  red.addColorStop(1, '#c81e2a')
+  ctx.fillStyle = red
+  ctx.fill(fist)
+  ctx.stroke(fist)
+  const thumb = new Path2D('M40 46c-6-2-10 6-6 12 4 5 10 4 14 0')
+  ctx.fill(thumb)
+  ctx.lineWidth = 5
+  ctx.stroke(thumb)
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.beginPath()
+  ctx.moveTo(60, 26)
+  ctx.quadraticCurveTo(72, 20, 82, 28)
+  ctx.stroke()
+  ctx.strokeStyle = '#2f7bff'
+  ctx.lineWidth = 4
+  ctx.beginPath()
+  ctx.moveTo(41, 70)
+  ctx.lineTo(50, 61)
   ctx.stroke()
   ctx.restore()
 }
-
 const _q = new Quaternion()
 const _qFlat = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, 0))
 const _e = new Euler()
@@ -212,9 +224,9 @@ const ROUND_SIDES = 32
  */
 const cellsFor = (v) => ({
   logo: { rect: [0, 0, 0.5, 0.5], paint: (ctx, r) => paintLogo(ctx, r, v.logo) },
-  arch: { rect: [0.5, 0, 0.5, 0.15], paint: (ctx, r) => paintText(ctx, r, 'STRETCH & FLY', { fill: GOLD, edge: '#c2410c', slant: 0.14 }) },
-  shop: { rect: [0.5, 0.15, 0.5, 0.13], paint: (ctx, r) => paintText(ctx, r, 'ARM SHOP', { fill: GOLD, edge: '#c2410c', slant: 0.14 }) },
-  zone: { rect: [0.5, 0.28, 0.5, 0.12], paint: (ctx, r) => paintText(ctx, r, 'LAUNCH PAD', { fill: NAVY, edge: '#a08a10' }) },
+  arch: { rect: [0.5, 0, 0.5, 0.15], paint: (ctx, r) => paintText(ctx, r, 'PUNCH ZONE', { fill: GOLD, edge: '#c2410c', slant: 0.14 }) },
+  shop: { rect: [0.5, 0.15, 0.5, 0.13], paint: (ctx, r) => paintText(ctx, r, 'GLOVE SHOP', { fill: GOLD, edge: '#c2410c', slant: 0.14 }) },
+  zone: { rect: [0.5, 0.28, 0.5, 0.12], paint: (ctx, r) => paintText(ctx, r, 'SMASH!', { fill: ['#ff8a8a', '#e8262e', '#8a0a14'], edge: '#5a0610' }) },
   ...Object.fromEntries(
     Array.from({ length: 6 }, (_, d) => [
       `digit${d}`,
@@ -230,26 +242,6 @@ const cellsFor = (v) => ({
     ]),
   ),
 })
-
-/**
- * The stretch lane's metre marks (5, 10 ... 40), painted beside its ticks on the west
- * side - over the pad's yellow where they're on it (its top is 0.10), on the path beyond.
- * Every number is made of the digits 0-5, all the atlas has.
- */
-function laneNumbers() {
-  const out = []
-  const w = 1.25
-  for (let m = 5; m <= MAX_PULL; m += 5) {
-    const z = LAUNCH_STAND.z + m
-    const y = z <= ROLL_ZONE.maxZ + 0.8 ? 0.14 : DECAL_Y
-    const digits = String(m).split('').map(Number)
-    digits.forEach((d, i) => {
-      const x = LAUNCH_STAND.x - 4 - (digits.length - 1 - i) * (w + 0.05)
-      out.push({ cell: `digit${d}`, width: w, at: [x, y, z], yaw: 0, flat: true })
-    })
-  }
-  return out
-}
 
 /**
  * Every quad: which cell it shows, its width in the world (its height follows the cell's
@@ -273,7 +265,6 @@ function quadList() {
     // Either side of the stretch lane down its middle.
     { cell: 'zone', width: zoneWidth, at: [-8.6, 0.18, (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 + 0.3], yaw: 0, flat: true },
     { cell: 'zone', width: zoneWidth, at: [8.6, 0.18, (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 + 0.3], yaw: 0, flat: true },
-    ...laneNumbers(),
     // The logo is drawn as a round disc, not a square, so the yard lines cut back round it
     // never run under its (clear) corners.
     { cell: 'logo', width: LOGO.radius * 2, at: [LOGO.x, DECAL_Y, LOGO.z], yaw: 0, flat: true, round: true },
@@ -364,5 +355,97 @@ export async function createPaintedSigns(maxTexture, world = 0) {
   geometry.setIndex(indices)
   geometry.computeBoundingSphere()
 
-  return [{ geometry, material, texture, position: [0, 0, 0], rotation: [0, 0, 0] }]
+  return [{ geometry, material, texture, position: [0, 0, 0], rotation: [0, 0, 0] }, createDojoSigns(maxTexture, world)]
+}
+
+// --- The dojo's lettering ---------------------------------------------------------------
+
+/** A brush-like serif for the kanji: whichever Japanese face the device has. */
+const KANJI_FONT = '"Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Noto Serif JP", "Noto Serif CJK JP", "MS Mincho", serif'
+/** The hanging scrolls on the dojo's back wall, one between each pair of posts: power, spirit, technique... */
+const DOJO_SCROLLS = ['力', '心', '技', '礼', '忍', '勝', '道', '夢', '魂']
+/** The banners on poles along the path: karate, dojo, osu!, fighting spirit. */
+const DOJO_BANNERS = ['空手', '道場', '押忍', '気合']
+
+/** One cell of the dojo atlas: a scroll (cream paper, dark rods, the kanji and a red seal). */
+function paintScroll(ctx, [rx, ry, rw, rh], kanji) {
+  ctx.fillStyle = '#f3e8cc'
+  ctx.fillRect(rx, ry, rw, rh)
+  ctx.fillStyle = '#c9a86a'
+  ctx.fillRect(rx, ry, rw, rh * 0.08)
+  ctx.fillRect(rx, ry + rh * 0.92, rw, rh * 0.08)
+  ctx.fillStyle = '#1b1410'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `900 ${Math.round(rw * 0.78)}px ${KANJI_FONT}`
+  ctx.fillText(kanji, rx + rw / 2, ry + rh * 0.42)
+  ctx.fillStyle = '#c8202e'
+  ctx.fillRect(rx + rw * 0.58, ry + rh * 0.72, rw * 0.2, rw * 0.2)
+}
+
+/** One cell of the dojo atlas: a banner (white cloth, a stripe of the venue's colour, two kanji, a seal). */
+function paintBanner(ctx, [rx, ry, rw, rh], text, stripe) {
+  ctx.fillStyle = '#fbf7ee'
+  ctx.fillRect(rx, ry, rw, rh)
+  ctx.fillStyle = stripe
+  ctx.fillRect(rx, ry, rw, rh * 0.07)
+  ctx.fillRect(rx, ry, rw * 0.1, rh)
+  ctx.fillStyle = '#1b1410'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const size = Math.round(rw * 0.7)
+  ctx.font = `900 ${size}px ${KANJI_FONT}`
+  ;[...text].forEach((ch, i) => ctx.fillText(ch, rx + rw * 0.55, ry + rh * (0.27 + i * 0.3)))
+  ctx.fillStyle = '#c8202e'
+  ctx.fillRect(rx + rw * 0.4, ry + rh * 0.84, rw * 0.3, rw * 0.3)
+}
+
+/**
+ * The dojo's lettering in a small atlas of its own (the main one is full) and one mesh:
+ * a scroll between each pair of posts on the dojo's back wall, facing the plaza, and a
+ * banner hanging from each pole along the path (dojo.js builds the rods and poles),
+ * seen from both sides.
+ */
+function createDojoSigns(maxTexture, world) {
+  const size = Math.min(512, maxTexture)
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  // Banners across the top half (1:3), scrolls across the bottom (1:2).
+  const banner = (i) => [(i * size) / DOJO_BANNERS.length, 0, size / DOJO_BANNERS.length, size * 0.5]
+  const scroll = (i) => [(i * size) / DOJO_SCROLLS.length, size * 0.5, size / DOJO_SCROLLS.length, (2 * size) / DOJO_SCROLLS.length]
+  DOJO_BANNERS.forEach((text, i) => paintBanner(ctx, banner(i), text, venueOf(world).primary))
+  DOJO_SCROLLS.forEach((kanji, i) => paintScroll(ctx, scroll(i), kanji))
+
+  const positions = []
+  const uvs = []
+  const indices = []
+  /** An upright quad `w` x `h` centred at (x, y, z), turned `yaw`, showing atlas rect `rect`. */
+  const quad = (rect, w, h, x, y, z, yaw) => {
+    const [rx, ry, rw, rh] = rect
+    _q.setFromEuler(_e.set(0, yaw, 0))
+    const first = positions.length / 3
+    for (const [cx, cy] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) {
+      _v.set(cx * w, cy * h, 0).applyQuaternion(_q).add(_at.set(x, y, z))
+      positions.push(_v.x, _v.y, _v.z)
+      uvs.push((rx + (cx + 0.5) * rw) / size, 1 - (ry + (0.5 - cy) * rh) / size)
+    }
+    indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
+  }
+  // Scrolls between the posts (facing east, over the shoji screens; their rods are blocks).
+  for (let i = 0; i < PAD_COUNT; i += 1) quad(scroll(i % DOJO_SCROLLS.length), 1.35, 2.7, DOJO_WALL_X + 0.26, 4.4, padCenterZ(i), Math.PI / 2)
+  // Banners down from each pole's crossbar, facing the spawn.
+  NOBORI.forEach((b, i) => quad(banner(i % DOJO_BANNERS.length), 1.05, 3.15, b.x + 0.62, 3.95, b.z, 0))
+
+  const texture = new CanvasTexture(canvas)
+  texture.colorSpace = SRGBColorSpace
+  texture.minFilter = LinearMipmapLinearFilter
+  const material = new MeshBasicMaterial({ map: texture, side: DoubleSide })
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2))
+  geometry.setIndex(indices)
+  geometry.computeBoundingSphere()
+  return { geometry, material, texture, position: [0, 0, 0], rotation: [0, 0, 0] }
 }

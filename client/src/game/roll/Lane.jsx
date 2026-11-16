@@ -100,7 +100,8 @@ const RUNWAY = RAINBOW.map((hex) => [new Color(hex).lerp(new Color('#ffffff'), 0
 const runwayAt = (meter, k) => RUNWAY[zoneIndexAt(meter) % RUNWAY.length][k % 2]
 
 /** World 1's valley: grass beside the runway and under the hills, and the hills' dirt. */
-const VALLEY = { grass: ['#45c43c', '#3db535'], ground: '#3aa834', dirt: ['#ff8aa8', '#c08cff'], leaves: ['#ff6fae', '#ffd21f'], trunk: '#ffffff' }
+/** The runway's valley: its hills, the trees on them and the turf, in the world's colours (sceneStyle VENUES `valley`). */
+const valley = () => venueOf(activeWorld()).valley
 /** Each stage's sky, parsed once per world. */
 const stageSkies = perWorld((zs) => zs.map((z) => skyLook(ZONE_THEMES[z.theme]?.sky ?? ZONE_THEMES.grassy.sky)))
 /** A stable pseudo-random 0-1 for piece `k` (and a salt): the same on every client. */
@@ -124,14 +125,22 @@ const BANNER_PARTS = 4
 const GOALPOSTS = YARD_LINES
 const TOWERS = GOALPOSTS + POST_SLOTS * POST_PARTS
 const ARCHES = TOWERS + TOWER_SLOTS * 2 * TOWER_PARTS
-/** The distance gates' height (to their beam) and half their spread. */
-const GATE_HEIGHT = 12
-const POST_HALF = 4.1
+/**
+ * The distance posts' height and how far out from the middle: one either side of the
+ * runway, out past the walls' pillars - nothing over the runway where the punch camera
+ * follows the break (Roll.jsx CHASE_CAM).
+ */
+const MARKER_HEIGHT = 3
+const MARKER_X = LANE_WIDTH / 2 + 2.6
 /** The banner arches stand at the pitch's edges (their pillars between the sideline and the boards). */
 const ARCH_HALF = LANE_WIDTH / 2 + 0.6
-const ARCH_HEIGHT = 9
+/**
+ * Tall: the punch camera following the break (~10.6 m up) passes under their name boards,
+ * which stay above its view until they're well ahead.
+ */
+const ARCH_HEIGHT = 15.6
 /** Banner boards: size on the arch, and the height of their middle. */
-const BANNER = { width: 14, height: 3.5, y: 7.4 }
+const BANNER = { width: 14, height: 3.5, y: 13.4 }
 const YELLOW = '#ffd21f'
 const WHITE = '#f4f7fb'
 const NAVY = TEAM.navy
@@ -475,6 +484,10 @@ function createBanners() {
   const k = Math.min(1, (getQuality().maxTexture || 512) / (BANNER_ROW * BANNERS))
   canvas.width = Math.round(BANNER_COLS * k)
   canvas.height = Math.round(BANNER_ROW * BANNERS * k)
+  // A software canvas: it's only ever drawn to (a board re-lettered as a stage comes into
+  // view, mid-punch) and uploaded as a texture - which, from a GPU canvas, means reading
+  // it back off the GPU first, a stall each time.
+  canvas.getContext('2d', { willReadFrequently: true })
   const texture = new CanvasTexture(canvas)
   texture.colorSpace = SRGBColorSpace
   texture.minFilter = LinearFilter
@@ -543,12 +556,13 @@ function placeHill(mesh, styles, k, sparse) {
   const back = side * (w * 0.3)
   const pink = hash(k, 6) > 0.8
   const tx = x - side * (w / 2 - 3)
+  const look = valley()
   const parts = [
     // [x, y centre, z, width, height, depth, colour, style]
-    [x, h / 2, 0, w, h, d, VALLEY.dirt[k % 2], STYLE.MESA],
-    [x + back, h + h * 0.4, 0, w * 0.6, h * 0.8, d * 0.75, VALLEY.dirt[(k + 1) % 2], STYLE.MESA],
-    [tx, h + 1.4, 0, 0.9, 2.8, 0.9, VALLEY.trunk, STYLE.SMOOTH],
-    [tx, h + 3.9, 0, 3.6, 2.4, 3.6, VALLEY.leaves[pink ? 1 : 0], STYLE.STUDS],
+    [x, h / 2, 0, w, h, d, look.dirt[k % 2], STYLE.HILL],
+    [x + back, h + h * 0.4, 0, w * 0.6, h * 0.8, d * 0.75, look.dirt[(k + 1) % 2], STYLE.HILL],
+    [tx, h + 1.4, 0, 0.9, 2.8, 0.9, look.trunk, STYLE.SMOOTH],
+    [tx, h + 3.9, 0, 3.6, 2.4, 3.6, look.leaves[pink ? 1 : 0], STYLE.STUDS],
   ]
   for (let i = 0; i < PARTS; i += 1) {
     if (skip) {
@@ -647,8 +661,7 @@ function placeMarks(marks, banners, from, laid) {
     if (clash) marks.setMatrixAt(j % YARD_LINES, ZERO)
     else mark(marks, j % YARD_LINES, m, 0, 0.07, LANE_WIDTH, 0.04, j % 5 === 0 ? 0.7 : 0.35)
   }
-  // A distance gate every 100 metres (not at the start): a banner strip, two pillars, the
-  // beam across their tops and a marker on it.
+  // A distance post either side every 100 metres (not at the start), a marker block on top.
   const p0 = Math.max(1, Math.ceil(from / POST_EVERY))
   for (let p = p0; p < p0 + POST_SLOTS; p += 1) {
     const base = GOALPOSTS + (p % POST_SLOTS) * POST_PARTS
@@ -657,11 +670,11 @@ function placeMarks(marks, banners, from, laid) {
       for (let i = 0; i < POST_PARTS; i += 1) marks.setMatrixAt(base + i, ZERO)
       continue
     }
-    mark(marks, base, m, 0, GATE_HEIGHT - 0.7, POST_HALF * 2 - 0.4, 0.5, 0.4)
-    mark(marks, base + 1, m, -POST_HALF, GATE_HEIGHT / 2, 0.6, GATE_HEIGHT, 0.6)
-    mark(marks, base + 2, m, POST_HALF, GATE_HEIGHT / 2, 0.6, GATE_HEIGHT, 0.6)
-    mark(marks, base + 3, m, 0, GATE_HEIGHT, POST_HALF * 2 + 0.6, 0.6, 0.6)
-    mark(marks, base + 4, m, 0, GATE_HEIGHT + 0.75, 0.9, 0.9, 0.9)
+    mark(marks, base, m, -MARKER_X, MARKER_HEIGHT / 2, 0.6, MARKER_HEIGHT, 0.6)
+    mark(marks, base + 1, m, MARKER_X, MARKER_HEIGHT / 2, 0.6, MARKER_HEIGHT, 0.6)
+    mark(marks, base + 2, m, -MARKER_X, MARKER_HEIGHT + 0.45, 0.9, 0.9, 0.9)
+    mark(marks, base + 3, m, MARKER_X, MARKER_HEIGHT + 0.45, 0.9, 0.9, 0.9)
+    marks.setMatrixAt(base + 4, ZERO)
   }
   // A floodlight tower either side every 100 yards, halfway between the posts, behind the pavilions.
   const t0 = Math.max(0, Math.ceil((from - 50) / 100))
@@ -831,7 +844,7 @@ export default function Lane() {
           fieldStyles.array[slot] = STYLE.STUDS
         } else {
           field.setMatrixAt(slot, slopeBoxMatrix(j * SEGMENT + SEGMENT / 2, 0, -0.5, FIELD_WIDTH, 1, SEGMENT, 0, _m))
-          field.setColorAt(slot, colorOf(VALLEY.ground))
+          field.setColorAt(slot, colorOf(valley().ground))
           fieldStyles.array[slot] = STYLE.STUDS
         }
       }
@@ -896,10 +909,10 @@ export default function Lane() {
       for (let k = band; k < band + STRIPES; k += 1) {
         const m = k * STRIPE + STRIPE / 2
         stripes.setMatrixAt(k % STRIPES, slopeBoxMatrix(m, 0, TURF_TOP / 2, LANE_WIDTH, TURF_TOP, STRIPE, 0, _m))
-        // The runway in its stage's rainbow colour; the turf beside it green (World 1)
-        // or in the stage's own greens (Palm Beach).
+        // The runway in its stage's rainbow colour; the turf beside it in the world's greens
+        // (or, at a beach venue, the stage's own).
         stripes.setColorAt(k % STRIPES, runwayAt(m, k))
-        const turf = beach ? colorOf(lookAt(m).turf[k % 2]) : colorOf(VALLEY.grass[k % 2])
+        const turf = beach ? colorOf(lookAt(m).turf[k % 2]) : colorOf(valley().grass[k % 2])
         for (let side = 0; side < 2; side += 1) {
           const s = side ? 1 : -1
           const i = STRIPES + (k % STRIPES) * 2 + side
@@ -911,9 +924,10 @@ export default function Lane() {
       stripes.instanceColor.needsUpdate = true
     }
 
-    // The painted distances, from just behind the focus to as far as the preset sees.
+    // The painted distances, from behind the chase camera (three walls back: Roll.jsx) to
+    // as far as the preset sees.
     const far = Math.min(getQuality().viewDistance, 420)
-    const first = Math.max(1, Math.floor((focus - 20) / MARK_EVERY))
+    const first = Math.max(1, Math.floor((focus - 45) / MARK_EVERY))
     if (first === laid.mark && far === laid.far) return
     laid.mark = first
     laid.far = far

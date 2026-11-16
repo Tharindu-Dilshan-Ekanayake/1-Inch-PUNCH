@@ -1,5 +1,3 @@
-import { RUN_CADENCE } from '../game/kick'
-
 import { useQuality } from '../store/quality'
 import { createCrowd } from './crowd'
 import { createMusic } from './music'
@@ -77,6 +75,7 @@ export function prepareAudio() {
   music = createMusic(ctx, master, noiseBuffer)
   music.setVolume(musicVolume)
   crowd = createCrowd(ctx, master, noiseBuffer)
+  bakeAll()
 }
 
 /**
@@ -264,95 +263,87 @@ function windStop() {
   liveCrowd()?.anticipate(false)
 }
 
-// --- The pull-up bar: a springy boing every rep ----------------------------------------
+// --- The charge: power gathering in your fist while you hold PUNCH --------------------
 
-/** Seconds between reps on a bar: one a TRAIN_INTERVAL (kick.RUN_CADENCE is its phase speed). */
-const REP = (Math.PI * 2) / RUN_CADENCE
-let bar = null
-
-/**
- * Starts the reps' sound under you: each pull-up a rubbery "boi-oing" as your arms snap
- * short and a soft creak as they stretch back out (scheduled a little ahead on the audio
- * clock, like the music). Stopped by treadmillStop (the template's name) when you let go.
- */
-function treadmillStart() {
-  if (!ctx || bar || silent() || ctx.state !== 'running') return
-  let next = ctx.currentTime + REP * 0.25
-  const schedule = () => {
-    next = Math.max(next, ctx.currentTime + 0.02)
-    while (next < ctx.currentTime + 0.4) {
-      const at = next - ctx.currentTime
-      tone(150, { type: 'triangle', at, duration: 0.2, volume: 0.06, slideTo: 380 })
-      tone(760, { type: 'sine', at: at + 0.02, duration: 0.07, volume: 0.02, slideTo: 1100 })
-      tone(120, { type: 'sawtooth', at: at + REP * 0.5, duration: 0.18, volume: 0.012, slideTo: 85 })
-      next += REP
-    }
-  }
-  bar = { timer: setInterval(schedule, 100) }
-  schedule()
-}
-
-/** Letting go of the bar: the reps stop. */
-function treadmillStop() {
-  if (!bar) return
-  clearInterval(bar.timer)
-  bar = null
-}
-
-// --- The stretch: rubber creaking as you pull back on the launch posts ---------------
-
-let stretch = null
-let stretchSetAt = 0
+let charge = null
+let chargeSetAt = 0
 
 /**
- * Holding LAUNCH: a taut rubber creak that climbs in pitch the further back you pull and,
- * once it's full, trembles with every twang. Moved by stretchSet, stopped by stretchStop.
+ * Holding PUNCH: power gathering in your fist - a warm, low hum (a note and its fifth)
+ * with a soft rush of air over it, both climbing an octave as the meter fills; full, it
+ * throbs fast, ready to go. Moved by stretchSet, stopped by stretchStop (the template's
+ * names, kept for its callers). Ten nodes, built once per charge.
  */
 function stretchStart() {
-  if (!ctx || stretch || silent() || ctx.state !== 'running') return
+  if (!ctx || charge || silent() || ctx.state !== 'running') return
   const t = ctx.currentTime
-  const osc = ctx.createOscillator()
-  osc.type = 'sawtooth'
-  osc.frequency.value = 70
-  const filter = ctx.createBiquadFilter()
-  filter.type = 'bandpass'
-  filter.frequency.value = 520
-  filter.Q.value = 3
-  const gain = ctx.createGain()
-  gain.gain.setValueAtTime(0.0001, t)
-  gain.gain.setTargetAtTime(0.03, t, 0.05)
-  // The creak: the rubber's loudness fluttering fast.
+  const out = ctx.createGain()
+  out.gain.setValueAtTime(0.0001, t)
+  out.gain.setTargetAtTime(1, t, 0.08)
+  out.connect(master)
+  // The hum: a note and its fifth, warm (low-passed).
+  const warm = ctx.createBiquadFilter()
+  warm.type = 'lowpass'
+  warm.frequency.value = 700
+  warm.Q.value = 0.7
+  const hum = ctx.createGain()
+  hum.gain.value = 0.03
+  warm.connect(hum).connect(out)
+  const root = ctx.createOscillator()
+  root.type = 'triangle'
+  root.frequency.value = 110
+  const fifth = ctx.createOscillator()
+  fifth.frequency.value = 165
+  root.connect(warm)
+  fifth.connect(warm)
+  // The throb: the hum's loudness pulsing, faster as it fills.
   const lfo = ctx.createOscillator()
-  lfo.frequency.value = 14
+  lfo.frequency.value = 4
   const depth = ctx.createGain()
-  depth.gain.value = 0.018
-  lfo.connect(depth).connect(gain.gain)
-  osc.connect(filter).connect(gain).connect(master)
-  osc.start(t)
+  depth.gain.value = 0.008
+  lfo.connect(depth).connect(hum.gain)
+  // Air rushing in round the fist.
+  const air = ctx.createBufferSource()
+  air.buffer = noiseBuffer
+  air.loop = true
+  const band = ctx.createBiquadFilter()
+  band.type = 'bandpass'
+  band.frequency.value = 600
+  band.Q.value = 1.2
+  const airGain = ctx.createGain()
+  airGain.gain.value = 0.004
+  air.connect(band).connect(airGain).connect(out)
+  root.start(t)
+  fifth.start(t)
   lfo.start(t)
-  stretch = { osc, filter, gain, lfo }
+  air.start(t, Math.random() * 0.5)
+  charge = { out, warm, root, fifth, lfo, depth, band, airGain, air }
 }
 
-/** `charge` 0-1, the stretch meter; `full` once it twangs. Called every frame. */
-function stretchSet(charge, full = false) {
-  if (!stretch) return
+/** `level` 0-1, the power meter; `full` once it's full. Called every frame. */
+function stretchSet(level, full = false) {
+  if (!charge) return
   const now = performance.now()
-  if (now - stretchSetAt < 40) return
-  stretchSetAt = now
+  if (now - chargeSetAt < 40) return
+  chargeSetAt = now
   const t = ctx.currentTime
-  stretch.osc.frequency.setTargetAtTime(70 + charge * 200, t, 0.03)
-  stretch.filter.frequency.setTargetAtTime(480 + charge * 1500, t, 0.04)
-  stretch.lfo.frequency.setTargetAtTime(full ? 32 : 12 + charge * 10, t, 0.05)
+  const f = 110 * (1 + level)
+  charge.root.frequency.setTargetAtTime(f, t, 0.05)
+  charge.fifth.frequency.setTargetAtTime(f * 1.5, t, 0.05)
+  charge.warm.frequency.setTargetAtTime(700 + level * 1800, t, 0.06)
+  charge.band.frequency.setTargetAtTime(600 + level * 2400, t, 0.06)
+  charge.airGain.gain.setTargetAtTime(0.004 + level * 0.016, t, 0.08)
+  charge.lfo.frequency.setTargetAtTime(full ? 14 : 4 + level * 6, t, 0.05)
+  charge.depth.gain.setTargetAtTime(full ? 0.02 : 0.008, t, 0.05)
 }
 
 function stretchStop() {
-  if (!stretch) return
-  const { osc, gain, lfo } = stretch
-  stretch = null
+  if (!charge) return
+  const { out, root, fifth, lfo, air } = charge
+  charge = null
   const t = ctx.currentTime
-  gain.gain.setTargetAtTime(0.0001, t, 0.03)
-  osc.stop(t + 0.3)
-  lfo.stop(t + 0.3)
+  out.gain.setTargetAtTime(0.0001, t, 0.04)
+  for (const node of [root, fifth, lfo, air]) node.stop(t + 0.3)
 }
 
 function ready(name, minGapMs = 0) {
@@ -403,10 +394,15 @@ function toneAt(freq, t, { type = 'sine', duration = 0.12, volume = 0.3, slideTo
 }
 
 /** A struck bell: the note, a quieter octave and a glassy strike, ringing into the echo. */
-function bell(freq, { at = 0, volume = 0.1, decay = 0.4 } = {}) {
-  tone(freq, { at, duration: decay, volume, echo: true })
-  tone(freq * 2, { at, duration: decay * 0.6, volume: volume * 0.35, echo: true })
-  tone(freq * 3.01, { type: 'triangle', at, duration: 0.05, volume: volume * 0.3 })
+function bell(freq, opts) {
+  bellWith(tone, freq, opts)
+}
+
+/** A bell made of tones from `T` (live: tone; baked: straight onto the offline clock). */
+function bellWith(T, freq, { at = 0, volume = 0.1, decay = 0.4 } = {}) {
+  T(freq, { at, duration: decay, volume, echo: true })
+  T(freq * 2, { at, duration: decay * 0.6, volume: volume * 0.35, echo: true })
+  T(freq * 3.01, { type: 'triangle', at, duration: 0.05, volume: volume * 0.3 })
 }
 
 /** Trophy chimes climb and fall this scale while they keep coming (C major pentatonic). */
@@ -440,196 +436,480 @@ function noiseAt(t, { duration = 0.3, volume = 0.25, from = 400, to = 2400, q = 
   src.stop(t + duration + 0.02)
 }
 
-export const sfx = {
-  click() {
-    if (ready('click', 40)) tone(660, { type: 'triangle', duration: 0.05, volume: 0.15 })
+// --- Baked sounds: rendered once, played as one node -----------------------------------
+
+/** A deep hit under a smash: a sine dropping fast. */
+const thump = (T, freq, volume, duration = 0.26) => T(freq, { duration, volume, slideTo: freq * 0.42 })
+
+/** Little knocks of pieces landing: `count` tones round `freq` Hz, from `at` s, `gap` s apart. */
+function knocks(T, count, freq, spread, { at = 0.12, gap = 0.06, volume = 0.06, type = 'triangle', duration = 0.06 } = {}) {
+  for (let i = 0; i < count; i += 1) {
+    const f = freq + Math.random() * spread
+    T(f, { type, at: at + i * gap + Math.random() * gap * 0.6, duration, volume, slideTo: f * 0.8 })
+  }
+}
+
+/** Gravel: `count` tiny bursts of noise scattered over `seconds` from `at`. */
+function gravel(N, count, seconds, { at = 0.08, from = 1500, volume = 0.07 } = {}) {
+  for (let i = 0; i < count; i += 1) {
+    N({ at: at + Math.random() * seconds, duration: 0.025, volume: volume * (0.6 + Math.random() * 0.6), from: from * (0.7 + Math.random() * 0.6), to: from * 0.6, q: 2 })
+  }
+}
+
+/**
+ * Each wall material's smash (Walls.jsx MATERIALS `sound`): what it sounds like coming
+ * apart, under the combo's ding.
+ */
+const SMASHES = {
+  /** Wood: a sharp crack, splintering crackle, planks knocking down. */
+  wood(T, N) {
+    thump(T, 110, 0.2)
+    N({ duration: 0.06, volume: 0.42, from: 4200, to: 2200, q: 1.4 })
+    N({ duration: 0.25, volume: 0.22, from: 2600, to: 900, q: 0.9 })
+    for (let i = 0; i < 6; i += 1) N({ at: 0.03 + i * 0.03 + Math.random() * 0.02, duration: 0.02, volume: 0.12, from: 3000, to: 2000, q: 3 })
+    knocks(T, 7, 320, 380)
   },
-  /** A Health gain: a bright tick, softer for the ones that trickle in while you train. */
-  gain(soft = false) {
-    if (ready('gain', 110)) tone(880 + Math.random() * 120, { type: 'triangle', duration: 0.07, volume: soft ? 0.05 : 0.07, slideTo: 1400 })
+  /** Brick: a crunch, a crumble of gravel, chunks thudding down. */
+  brick(T, N) {
+    thump(T, 90, 0.26)
+    N({ duration: 0.1, volume: 0.36, from: 1800, to: 700, q: 0.7 })
+    N({ duration: 0.55, volume: 0.14, from: 1200, to: 400, q: 0.8 })
+    gravel(N, 12, 0.5)
+    knocks(T, 6, 220, 200, { at: 0.15, gap: 0.07, volume: 0.07 })
   },
-  levelUp() {
-    if (!ready('levelUp')) return
-    ;[523, 659, 784, 1047].forEach((f, i) => tone(f, { type: 'square', at: i * 0.07, duration: 0.14, volume: 0.09 }))
+  /** Stone: a deep boom, a long rumble, heavy blocks landing. */
+  stone(T, N) {
+    thump(T, 70, 0.32, 0.4)
+    N({ duration: 0.12, volume: 0.32, from: 1400, to: 500, q: 0.6 })
+    N({ duration: 0.7, volume: 0.16, from: 500, to: 160, q: 0.7 })
+    knocks(T, 6, 140, 120, { at: 0.18, gap: 0.09, volume: 0.1, type: 'sine', duration: 0.12 })
+    gravel(N, 8, 0.6, { at: 0.1, from: 1200, volume: 0.06 })
   },
-  /** Shooting past the launch posts: a thump, a whoosh, a rising boing and a sparkle. */
-  rollStart() {
-    if (!ready('rollStart')) return
-    tone(110, { duration: 0.18, volume: 0.16, slideTo: 55 })
-    noise({ duration: 0.3, volume: 0.12, from: 220, to: 900, q: 0.8 })
-    tone(220, { type: 'triangle', duration: 0.32, volume: 0.09, slideTo: 660 })
-    bell(1319, { at: 0.2, volume: 0.05, decay: 0.3 })
-  },
-  /**
-   * Letting go of the stretch (`power` 0-1, how far back you'd pulled): the rubber's big
-   * twang dropping in pitch, a slap, and the rush of being slung forward.
-   */
-  rubberSnap(power = 1) {
-    if (!ready('rubberSnap', 250)) return
-    tone(520 + 300 * power, { type: 'triangle', duration: 0.32, volume: 0.17, slideTo: 130 })
-    tone(260 + 120 * power, { type: 'sawtooth', duration: 0.14, volume: 0.05, slideTo: 90 })
-    noise({ duration: 0.05, volume: 0.25, from: 2400, to: 900, q: 1.2 })
-    noise({ at: 0.06, duration: 0.4, volume: 0.1 * (0.5 + power * 0.5), from: 300, to: 2600, q: 0.7 })
-  },
-  /** A referee's whistle: a pea-whistle's trilling blast, two of them when `long`. */
-  whistle(long = false) {
-    if (!ready('whistle', 250)) return
-    const blasts = long ? [[0, 0.16], [0.24, 0.5]] : [[0, 0.24]]
-    for (const [at, length] of blasts) {
-      const t = ctx.currentTime + at
-      const osc = ctx.createOscillator()
-      osc.frequency.value = 2850
-      // The pea rattling in the whistle: a fast warble.
-      const pea = ctx.createOscillator()
-      pea.type = 'square'
-      pea.frequency.value = 32
-      const depth = ctx.createGain()
-      depth.gain.value = 150
-      pea.connect(depth).connect(osc.frequency)
-      const gain = ctx.createGain()
-      gain.gain.setValueAtTime(0.0001, t)
-      gain.gain.exponentialRampToValueAtTime(0.07, t + 0.015)
-      gain.gain.setValueAtTime(0.07, t + length - 0.04)
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + length)
-      osc.connect(gain).connect(master)
-      gain.connect(echo)
-      osc.start(t)
-      pea.start(t)
-      osc.stop(t + length + 0.02)
-      pea.stop(t + length + 0.02)
+  /** Metal: a clang ringing out (a struck plate's out-of-tune partials), plates clanking down. */
+  metal(T, N) {
+    thump(T, 85, 0.22)
+    N({ duration: 0.05, volume: 0.3, from: 5000, to: 2500, q: 1 })
+    const base = 380 + Math.random() * 120
+    ;[1, 2.76, 5.4, 8.93].forEach((k, i) => T(base * k, { duration: 0.9 - i * 0.18, volume: 0.07 / (i + 1), attack: 0.002, echo: i < 2 }))
+    for (let i = 0; i < 5; i += 1) {
+      const f = 900 + Math.random() * 900
+      const at = 0.2 + i * 0.1 + Math.random() * 0.05
+      T(f, { at, duration: 0.18, volume: 0.03, attack: 0.002 })
+      T(f * 2.76, { at, duration: 0.1, volume: 0.015, attack: 0.002 })
     }
   },
+  /** Ice and glass: a bright shatter and a rain of tinkling shards. */
+  ice(T, N) {
+    thump(T, 100, 0.18)
+    N({ duration: 0.18, volume: 0.3, from: 6000, to: 3500, q: 0.7 })
+    N({ duration: 0.05, volume: 0.25, from: 3000, to: 5000, q: 1 })
+    for (let i = 0; i < 16; i += 1) T(2400 + Math.random() * 3600, { at: 0.03 + Math.random() * 0.6, duration: 0.05 + Math.random() * 0.08, volume: 0.02 + Math.random() * 0.025, attack: 0.002 })
+  },
+  /** A paper screen: a tearing rip, its thin wooden lattice clattering. */
+  paper(T, N) {
+    thump(T, 130, 0.16, 0.18)
+    N({ duration: 0.22, volume: 0.38, from: 1200, to: 3600, q: 0.9 })
+    N({ at: 0.05, duration: 0.18, volume: 0.22, from: 2400, to: 1500, q: 1.5 })
+    knocks(T, 5, 420, 300, { at: 0.1, gap: 0.06, volume: 0.05, duration: 0.05 })
+  },
+  /** Lava rock: stone, with a hiss of steam and a deep whoomp. */
+  lava(T, N) {
+    SMASHES.stone(T, N)
+    T(55, { duration: 0.5, volume: 0.14, slideTo: 40, attack: 0.04 })
+    N({ at: 0.05, duration: 0.8, volume: 0.07, from: 5200, to: 3000, q: 0.5 })
+  },
+  /** Starry stuff: a boom and a glittering, ringing shimmer. */
+  galaxy(T, N) {
+    thump(T, 80, 0.26, 0.35)
+    N({ duration: 0.3, volume: 0.16, from: 600, to: 2600, q: 0.7 })
+    ;[880, 1320, 1760, 2640].forEach((f, i) => T(f * (0.99 + Math.random() * 0.02), { at: 0.05 + i * 0.05, duration: 0.5, volume: 0.03, echo: true }))
+    gravel(N, 6, 0.5, { from: 2400, volume: 0.04 })
+  },
+  /** Rainbow: a brick crunch and a sparkle running up. */
+  rainbow(T, N) {
+    SMASHES.brick(T, N)
+    ;[1047, 1319, 1568, 2093].forEach((f, i) => T(f, { type: 'triangle', at: 0.08 + i * 0.05, duration: 0.15, volume: 0.035, echo: true }))
+  },
+  /** Toy bricks: a crack and a clatter of little plastic clicks. */
+  toy(T, N) {
+    thump(T, 95, 0.24)
+    N({ duration: 0.08, volume: 0.4, from: 5200, to: 1800, q: 0.6 })
+    N({ duration: 0.22, volume: 0.32, from: 3200, to: 700, q: 0.7 })
+    N({ duration: 0.4, volume: 0.12, from: 900, to: 260, q: 1.1 })
+    for (let i = 0; i < 9; i += 1) T(1200 + Math.random() * 2200, { type: 'square', at: 0.08 + i * 0.045 + Math.random() * 0.03, duration: 0.025, volume: 0.035 })
+  },
+}
+
+/**
+ * The sounds that come many times a second, or right on the frame that matters (a wall
+ * smashed, a trophy, a Health tick, a bag punched, the punch landing): each is a recipe of
+ * tones and noises, rendered once, offline, while the game loads, and then played as one
+ * buffer - one audio node per play, not the dozen oscillators, filters and gains each
+ * built on the main thread (several walls a second, that was a real share of a slow
+ * phone's frame).
+ *
+ * `build(T, N, rate)`: T(freq, opts) a tone and N(opts) a noise, `opts.at` seconds in;
+ * `rate` multiplies the pitch (baked at 1 and played faster or slower instead). `takes`
+ * renders that many (the random bits differ), one picked at random each time.
+ */
+const RECIPES = {
+  ...Object.fromEntries(Object.entries(SMASHES).map(([name, build]) => [`smash-${name}`, { seconds: name === 'metal' ? 1 : 0.85, takes: 2, build }])),
+  /** The combo's bright 'ding', climbing a whole tone a wall (played faster). */
+  ding: {
+    seconds: 0.4,
+    build(T, N, r = 1) {
+      T(523 * r, { type: 'triangle', at: 0.04, duration: 0.18, volume: 0.09, echo: true })
+      T(784.5 * r, { type: 'triangle', at: 0.1, duration: 0.22, volume: 0.06, echo: true })
+    },
+  },
+  /** A trophy's bell, on a C (played up the scale). */
+  bell: {
+    seconds: 0.4,
+    build(T, N, r = 1) {
+      bellWith(T, 1047 * r, { volume: 0.085, decay: 0.32 })
+    },
+  },
+  gain: {
+    seconds: 0.1,
+    build(T, N, r = 1) {
+      T(880 * r, { type: 'triangle', duration: 0.07, volume: 0.07, slideTo: 1400 * r })
+    },
+  },
+  gainSoft: {
+    seconds: 0.1,
+    build(T, N, r = 1) {
+      T(880 * r, { type: 'triangle', duration: 0.07, volume: 0.05, slideTo: 1400 * r })
+    },
+  },
+  /** A training bag punched: the leather's slap, the bag's heavy swing, its chain jingling. */
+  bagHit: {
+    seconds: 0.32,
+    takes: 3,
+    build(T, N) {
+      N({ duration: 0.045, volume: 0.26, from: 1600, to: 700, q: 0.8 })
+      T(118, { duration: 0.16, volume: 0.17, slideTo: 58 })
+      N({ at: 0.04, duration: 0.2, volume: 0.025, from: 2600 + Math.random() * 800, to: 2200, q: 6 })
+    },
+  },
+  /** A click punch: the glove swishing through the air and a soft thud. */
+  swing: {
+    seconds: 0.18,
+    takes: 2,
+    build(T, N) {
+      N({ duration: 0.12, volume: 0.07, from: 900, to: 2600, q: 1.1 })
+      T(130, { type: 'sine', at: 0.05, duration: 0.09, volume: 0.1, slideTo: 70 })
+    },
+  },
+  click: {
+    seconds: 0.08,
+    build(T) {
+      T(660, { type: 'triangle', duration: 0.05, volume: 0.15 })
+    },
+  },
+  /** Drawing back to punch: air gathering, tension rising. */
+  windUp: {
+    seconds: 0.4,
+    build(T, N) {
+      N({ duration: 0.3, volume: 0.16, from: 350, to: 1500, q: 0.9 })
+      T(95, { type: 'triangle', duration: 0.28, volume: 0.09, slideTo: 150, attack: 0.08 })
+    },
+  },
+  /** The punch landing: a smack, a crack, the body of the hit, a boom under it and the air blasting out. */
+  punchImpact: {
+    seconds: 0.85,
+    build(T, N) {
+      N({ duration: 0.07, volume: 0.42, from: 1500, to: 500, q: 0.6 })
+      N({ duration: 0.05, volume: 0.24, from: 3800, to: 2200, q: 1.3 })
+      T(66, { duration: 0.5, volume: 0.34, slideTo: 30 })
+      T(42, { duration: 0.75, volume: 0.2, attack: 0.02 })
+      N({ at: 0.02, duration: 0.35, volume: 0.1, from: 2400, to: 500, q: 0.7 })
+    },
+  },
+  /** The punch's force slamming into the wall that holds: a deep boom, a crack, a long rumble, grit pattering. */
+  shockwave: {
+    seconds: 1.2,
+    build(T, N) {
+      T(52, { duration: 0.9, volume: 0.34, slideTo: 26 })
+      N({ duration: 0.12, volume: 0.32, from: 2600, to: 700, q: 0.7 })
+      N({ duration: 1, volume: 0.13, from: 420, to: 110, q: 0.7 })
+      gravel(N, 8, 0.7, { at: 0.15, volume: 0.05 })
+    },
+  },
+  /** The wall that holds, hit: a heavy thud, a crack, grit falling off it. */
+  wallHold: {
+    seconds: 0.6,
+    build(T, N) {
+      T(70, { duration: 0.32, volume: 0.28, slideTo: 36 })
+      N({ duration: 0.05, volume: 0.24, from: 2200, to: 900, q: 1 })
+      N({ duration: 0.25, volume: 0.14, from: 600, to: 160, q: 0.8 })
+      gravel(N, 4, 0.2, { at: 0.06, from: 1800, volume: 0.06 })
+    },
+  },
+  /** A new stage reached mid-punch: a quick, cheerful rising jingle. */
+  stageUp: {
+    seconds: 0.62,
+    takes: 2,
+    build(T) {
+      ;[659, 784, 988, 1319].forEach((f, i) => T(f, { type: 'triangle', at: i * 0.06, duration: 0.16, volume: 0.08, echo: true }))
+      for (let i = 0; i < 3; i += 1) bellWith(T, 1760 + Math.random() * 900, { at: 0.24 + i * 0.05, volume: 0.03, decay: 0.18 })
+    },
+  },
+  /** PERFECT: a crack, fire bursting up with a deep fwoosh and a crackle, a chime climbing. */
+  perfect: {
+    seconds: 0.85,
+    build(T, N) {
+      T(2200, { duration: 0.04, volume: 0.2, slideTo: 1400 })
+      N({ duration: 0.25, volume: 0.1, from: 500, to: 2400, q: 0.9 })
+      N({ duration: 0.5, volume: 0.16, from: 160, to: 600, q: 0.6 })
+      T(90, { duration: 0.5, volume: 0.14, slideTo: 160 })
+      for (let i = 0; i < 6; i += 1) N({ at: 0.1 + i * 0.07 + Math.random() * 0.04, duration: 0.04, volume: 0.07, from: 3800, to: 2600, q: 2 })
+      ;[784, 1047, 1319, 1568, 2093].forEach((f, i) => bellWith(T, f, { at: 0.04 + i * 0.05, volume: 0.07, decay: 0.35 }))
+    },
+  },
+  /** GREAT: an electric crack, a zap and a rising chime. */
+  great: {
+    seconds: 0.5,
+    build(T, N) {
+      T(1800, { type: 'square', duration: 0.05, volume: 0.1, slideTo: 600 })
+      N({ duration: 0.16, volume: 0.1, from: 1800, to: 4000, q: 1.4 })
+      ;[659, 988, 1319].forEach((f, i) => bellWith(T, f, { at: 0.03 + i * 0.05, volume: 0.07, decay: 0.3 }))
+    },
+  },
+  /** GOOD: a clean, bright tok and a sparkle. */
+  good: {
+    seconds: 0.4,
+    build(T) {
+      T(1500, { duration: 0.05, volume: 0.18, slideTo: 1050 })
+      bellWith(T, 1568, { at: 0.03, volume: 0.06, decay: 0.25 })
+      bellWith(T, 2093, { at: 0.08, volume: 0.05, decay: 0.25 })
+    },
+  },
+  levelUp: {
+    seconds: 0.4,
+    build(T) {
+      ;[523, 659, 784, 1047].forEach((f, i) => T(f, { type: 'square', at: i * 0.07, duration: 0.14, volume: 0.09 }))
+    },
+  },
+  /** A good punch blasting off as time snaps back: a deep boom and a rising whoosh (full power). */
+  perfectRelease: {
+    seconds: 0.65,
+    build(T, N) {
+      T(70, { duration: 0.6, volume: 0.3, slideTo: 32 })
+      N({ duration: 0.3, volume: 0.12, from: 250, to: 1800, q: 0.7 })
+      T(440, { type: 'triangle', duration: 0.35, volume: 0.06, slideTo: 1760 })
+    },
+  },
+  jumpWhoosh: {
+    seconds: 0.28,
+    build(T, N) {
+      N({ duration: 0.25, volume: 0.08, from: 300, to: 1200, q: 0.9 })
+    },
+  },
+  /** Wins paid out: a fanfare, a shimmering chord and a shower of coins. */
+  wins: {
+    seconds: 1.3,
+    takes: 2,
+    build(T) {
+      ;[784, 988, 1175, 1568].forEach((f, i) => T(f, { type: 'triangle', at: i * 0.07, duration: 0.2, volume: 0.1, echo: true }))
+      // G major, held, each voice doubled a hair apart so it shimmers.
+      for (const f of [784, 988, 1175]) {
+        T(f * 1.003, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05, echo: true })
+        T(f * 0.997, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05 })
+      }
+      for (let i = 0; i < 6; i += 1) bellWith(T, 2093 + Math.random() * 1200, { at: 0.3 + i * 0.07 + Math.random() * 0.03, volume: 0.035, decay: 0.2 })
+    },
+  },
+}
+
+/**
+ * Baked sounds' sample rate: everything in them sits well under its 16 kHz limit, and
+ * ~40 takes stay small (a couple of MB).
+ */
+const BAKE_RATE = 32000
+
+/** Each recipe's rendered takes, by name, once baked. */
+const baked = {}
+
+/** A recipe's tones and noises straight onto the offline context's clock (no whenDue). */
+const offlineTone = (freq, opts) => toneAt(freq, opts.at ?? 0, opts)
+const offlineNoise = (opts) => noiseAt(opts.at ?? 0, opts)
+
+/**
+ * Renders every recipe's takes, one after another, in the background (OfflineAudioContext
+ * renders off the main thread). While a recipe's being built, the module's context and
+ * outputs point at the offline one, so toneAt / noiseAt build into it unchanged; its
+ * echo sends go nowhere (a baked sound is sent into the live echo as it plays instead).
+ */
+function bakeAll() {
+  const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext
+  if (!Offline) return
+  const jobs = []
+  for (const [name, recipe] of Object.entries(RECIPES)) for (let i = 0; i < (recipe.takes || 1); i += 1) jobs.push([name, recipe])
+  const next = () => {
+    const job = jobs.shift()
+    if (!job || !ctx) return
+    const [name, recipe] = job
+    let off
+    try {
+      off = new Offline(1, Math.ceil(recipe.seconds * BAKE_RATE), BAKE_RATE)
+    } catch {
+      return
+    }
+    const live = [ctx, master, echo]
+    ctx = off
+    master = off.destination
+    echo = off.createGain()
+    try {
+      recipe.build(offlineTone, offlineNoise, 1)
+    } finally {
+      ;[ctx, master, echo] = live
+    }
+    off
+      .startRendering()
+      .then((buffer) => {
+        ;(baked[name] ||= []).push(buffer)
+        next()
+      })
+      .catch(() => null)
+  }
+  next()
+}
+
+/**
+ * Plays recipe `name` now, `rate` times its pitch, also into the echo when `wet`, at
+ * `volume` (through one gain node, when it isn't 1), `at` seconds from now: one buffer node if it's baked;
+ * built live from the recipe if not (the first moments of loading, or no
+ * OfflineAudioContext - at full volume).
+ */
+function play(name, rate = 1, wet = false, volume = 1, at = 0) {
+  const takes = baked[name]
+  if (!takes) {
+    RECIPES[name].build(tone, noise, rate)
+    return
+  }
+  const src = ctx.createBufferSource()
+  src.buffer = takes[Math.floor(Math.random() * takes.length)]
+  if (rate !== 1) src.playbackRate.value = rate
+  let out = src
+  if (volume !== 1) {
+    out = ctx.createGain()
+    out.gain.value = volume
+    src.connect(out)
+  }
+  out.connect(master)
+  if (wet) out.connect(echo)
+  src.start(ctx.currentTime + at)
+}
+
+/**
+ * A gong, for a belt earned: a struck bronze disc's out-of-tune partials ringing out for
+ * seconds, sagging a touch in pitch, over the mallet's thud. Built live (it's rare).
+ */
+function gong() {
+  const t = ctx.currentTime
+  const base = 98
+  ;[1, 1.48, 2.02, 2.69, 3.43, 4.21].forEach((k, i) => {
+    toneAt(base * k, t, { duration: 3.2 - i * 0.4, volume: 0.09 / (1 + i * 0.6), attack: 0.004, slideTo: base * k * 0.985, echo: i < 2 })
+  })
+  noiseAt(t, { duration: 0.12, volume: 0.12, from: 900, to: 300, q: 0.8 })
+}
+
+export const sfx = {
+  click() {
+    if (ready('click', 40)) play('click')
+  },
+  /** A Health gain: a bright tick, softer for the ones that trickle in. */
+  gain(soft = false) {
+    if (ready('gain', 110)) play(soft ? 'gainSoft' : 'gain', 1 + Math.random() * 0.136)
+  },
+  /** A training bag punched, landing `at` seconds from now (each a little higher or lower than the last). */
+  bagHit(at = 0) {
+    if (ready('bagHit', 90)) play('bagHit', 0.92 + Math.random() * 0.16, false, 1, at)
+  },
+  levelUp() {
+    if (ready('levelUp')) play('levelUp')
+  },
+  /** Drawing back to throw the punch. */
+  windUp() {
+    if (ready('windUp', 250)) play('windUp')
+  },
+  /** The punch landing on the first wall. */
+  punchImpact() {
+    if (ready('punchImpact', 250)) play('punchImpact')
+  },
   /**
-   * You belly-flopping onto the turf from the top of the arc (`power` 0-1, how high you
-   * fell): a deep, soft thud, a rubbery bounce, a short scuff of grass, and a few clods of
-   * soil pattering down - the crowd roaring over it.
+   * The punch's force slamming into the wall that holds at the end (`power` 0-1, how big
+   * the punch was): a deep boom and a rumble, the crowd roaring over it.
    */
   groundSmash(power = 1) {
     if (!ready('groundSmash', 400)) return
     liveCrowd()?.roar(0.5 + 0.5 * power)
-    const p = 0.6 + 0.4 * power
-    tone(95, { duration: 0.6, volume: 0.32 * p, slideTo: 32 })
-    tone(190, { type: 'triangle', duration: 0.14, volume: 0.1 * p, slideTo: 95 })
-    noise({ duration: 0.14, volume: 0.16 * p, from: 900, to: 280, q: 0.8 })
-    for (let i = 0; i < 5; i += 1) {
-      tone(300 + Math.random() * 220, { type: 'triangle', at: 0.14 + i * 0.07 + Math.random() * 0.04, duration: 0.04, volume: 0.03 * p, slideTo: 190 })
-    }
+    play('shockwave', 1, false, 0.6 + 0.4 * power)
   },
-  /** Bouncing on after you land (`n` 1, 2, 3...): a thud and a boing, softer each time. */
+  /** The force settling after it (`n` 1, 2, 3...): a soft thud, softer each time. */
   bounce(n = 1) {
-    if (!ready('bounce', 120)) return
-    const v = 0.16 / n
-    tone(150, { duration: 0.16, volume: v, slideTo: 60 })
-    tone(1250 - n * 90, { duration: 0.04, volume: v * 0.7, slideTo: 900 })
-  },
-  /** A cartoon falling whistle over `duration` seconds, as you drop from the top of the arc. */
-  fallWhistle(duration = 1.5) {
-    if (!ready('fallWhistle', 300) || duration < 0.3) return
-    tone(1800, { duration, volume: 0.045, slideTo: 420, attack: Math.min(0.3, duration * 0.2) })
+    if (ready('bounce', 120)) tone(150, { duration: 0.16, volume: 0.16 / n, slideTo: 60 })
   },
   /**
-   * A PERFECT launch: a crack of the rubber, fire bursting up with a deep fwoosh and a
-   * crackle, and a bright chime climbing up.
+   * A PERFECT punch: a crack, fire bursting up with a deep fwoosh and a crackle, and a
+   * bright chime climbing up.
    */
   perfectHit() {
-    if (!ready('perfectHit', 300)) return
-    tone(2200, { duration: 0.04, volume: 0.2, slideTo: 1400 })
-    noise({ duration: 0.25, volume: 0.1, from: 500, to: 2400, q: 0.9 })
-    noise({ duration: 0.5, volume: 0.16, from: 160, to: 600, q: 0.6 })
-    tone(90, { duration: 0.5, volume: 0.14, slideTo: 160 })
-    for (let i = 0; i < 6; i += 1) noise({ at: 0.1 + i * 0.07 + Math.random() * 0.04, duration: 0.04, volume: 0.07, from: 3800, to: 2600, q: 2 })
-    ;[784, 1047, 1319, 1568, 2093].forEach((f, i) => bell(f, { at: 0.04 + i * 0.05, volume: 0.07, decay: 0.35 }))
+    if (ready('perfectHit', 300)) play('perfect', 1, true)
   },
   /**
-   * A good launch blasting you away as time snaps back (`power` 0-1, the grade's): a deep
-   * boom and a rising whoosh.
+   * A good punch blasting off as time snaps back (`power` 0-1, the grade's): a deep boom
+   * and a rising whoosh.
    */
   perfectRelease(power = 1) {
-    if (!ready('perfectRelease', 300)) return
-    tone(70, { duration: 0.6, volume: 0.3 * power, slideTo: 32 })
-    noise({ duration: 0.3, volume: 0.12 * power, from: 250, to: 1800, q: 0.7 })
-    tone(440, { type: 'triangle', duration: 0.35, volume: 0.06 * power, slideTo: 1760 })
+    if (ready('perfectRelease', 300)) play('perfectRelease', 1, false, power)
   },
-  /** Shooting past the posts on a graded launch: its own sound for each grade. */
+  /** A graded punch landing: its own sound for each grade. */
   gradeHit(grade) {
     if (grade === 'perfect') return sfx.perfectHit()
-    if (!ready('gradeHit', 300)) return
-    if (grade === 'great') {
-      // An electric crack, a zap and a rising chime.
-      tone(1800, { type: 'square', duration: 0.05, volume: 0.1, slideTo: 600 })
-      noise({ duration: 0.16, volume: 0.1, from: 1800, to: 4000, q: 1.4 })
-      ;[659, 988, 1319].forEach((f, i) => bell(f, { at: 0.03 + i * 0.05, volume: 0.07, decay: 0.3 }))
-    } else {
-      // A clean, bright tok and a sparkle.
-      tone(1500, { duration: 0.05, volume: 0.18, slideTo: 1050 })
-      bell(1568, { at: 0.03, volume: 0.06, decay: 0.25 })
-      bell(2093, { at: 0.08, volume: 0.05, decay: 0.25 })
-    }
+    if (ready('gradeHit', 300)) play(grade === 'great' ? 'great' : 'good', 1, true)
   },
-  /** A WEAK launch: a dull, soft flop off a slack rubber band. */
+  /** A WEAK punch: a dull, soft flop. */
   weakHit() {
     if (!ready('weakHit', 300)) return
     tone(320, { duration: 0.12, volume: 0.12, slideTo: 140 })
     tone(180, { type: 'triangle', at: 0.08, duration: 0.18, volume: 0.06, slideTo: 90 })
   },
-  /** The ball dropping onto the tee in front of you when you press KICK: a springy bloop. */
-  tirePop() {
-    if (!ready('tirePop', 200)) return
-    tone(420, { type: 'sine', duration: 0.16, volume: 0.14, slideTo: 980 })
-    tone(1320, { type: 'triangle', at: 0.08, duration: 0.1, volume: 0.06 })
+  /** A click punch: a quick swish of the glove through the air and a soft thud. */
+  punchSwing() {
+    if (ready('punchSwing', 120)) play('swing')
   },
-  /** Flying off a ramp: a rising rush of air. */
+  /** The punch's force bursting off: a rising rush of air. */
   jumpWhoosh() {
-    if (ready('jumpWhoosh', 250)) noise({ duration: 0.25, volume: 0.08, from: 300, to: 1200, q: 0.9 })
-  },
-  /** The tire slapping back down after a jump: a thump and a crunch of gravel. */
-  tireLand() {
-    if (!ready('tireLand', 250)) return
-    tone(160, { type: 'sine', duration: 0.2, volume: 0.18, slideTo: 55 })
-    noise({ duration: 0.24, volume: 0.13, from: 2400, to: 300, q: 0.6 })
+    if (ready('jumpWhoosh', 250)) play('jumpWhoosh')
   },
   /**
-   * The tire smashing through a wooden wall: a crunch of splintering noise over a low
-   * thump, then a few high clattering clicks of falling planks (~0.4 s).
+   * A wall smashed: its material coming apart (`material`: a SMASHES key - wood
+   * splintering, brick crumbling, metal clanging, glass shattering...), and a bright
+   * 'ding' that climbs with every wall smashed in a row - the combo.
    */
-  wallSmash(combo = 1) {
+  wallSmash(combo = 1, material = 'toy') {
     if (!ready('wallSmash', 120)) return
-    // The hit: a deep boom and a sharp wooden crack.
-    tone(95, { duration: 0.26, volume: 0.24, slideTo: 40 })
-    noise({ duration: 0.08, volume: 0.4, from: 5200, to: 1800, q: 0.6 })
-    noise({ duration: 0.22, volume: 0.32, from: 3200, to: 700, q: 0.7 })
-    noise({ duration: 0.4, volume: 0.12, from: 900, to: 260, q: 1.1 })
-    // The pieces raining down: a clatter of little wooden clicks.
-    for (let i = 0; i < 9; i += 1) {
-      tone(1200 + Math.random() * 2200, { type: 'square', at: 0.08 + i * 0.045 + Math.random() * 0.03, duration: 0.025, volume: 0.035 })
-    }
-    // A bright 'ding' that climbs with every wall smashed in a row: the combo.
-    const step = Math.min(combo - 1, 10)
-    const f = 523 * Math.pow(2, (step * 2) / 12)
-    tone(f, { type: 'triangle', at: 0.04, duration: 0.18, volume: 0.09, echo: true })
-    tone(f * 1.5, { type: 'triangle', at: 0.1, duration: 0.22, volume: 0.06, echo: true })
+    play(SMASHES[material] ? `smash-${material}` : 'smash-toy')
+    play('ding', Math.pow(2, (Math.min(combo - 1, 10) * 2) / 12), true)
   },
-  /** A new stage reached mid-roll: a quick, cheerful rising jingle. */
+  /** A new stage reached mid-punch: a quick, cheerful rising jingle. */
   stageUp() {
     if (!ready('stageUp', 300)) return
     liveCrowd()?.whoo(2)
-    ;[659, 784, 988, 1319].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.06, duration: 0.16, volume: 0.08, echo: true }))
-    for (let i = 0; i < 3; i += 1) bell(1760 + Math.random() * 900, { at: 0.24 + i * 0.05, volume: 0.03, decay: 0.18 })
+    play('stageUp', 1, true)
   },
   /** Trophies landing in the Wins counter: little coin pings, one after another. */
   coins(count = 8) {
     if (!ready('coins', 400)) return
     for (let i = 0; i < count; i += 1) bell(1900 + (i % 4) * 230, { at: 0.55 + i * 0.07, volume: 0.04, decay: 0.12 })
   },
-  /** The tire hitting a wall it can't break: a dull, heavy thud and a short low boing (~0.35 s). */
+  /** The punch hitting the wall that holds: a heavy thud, a crack, grit falling. */
   wallBlock() {
-    if (!ready('wallBlock', 150)) return
-    tone(70, { duration: 0.28, volume: 0.24, slideTo: 38 })
-    noise({ duration: 0.12, volume: 0.14, from: 500, to: 150, q: 0.9 })
-    tone(150, { type: 'triangle', at: 0.05, duration: 0.3, volume: 0.07, slideTo: 95 })
+    if (ready('wallBlock', 150)) play('wallHold')
   },
   /**
-   * A trophy rolled through: a bell that climbs the scale and back down while they keep
+   * A trophy smashed past: a bell that climbs the scale and back down while they keep
    * coming, so a run of them plays a little tune.
    */
   trophy() {
@@ -639,22 +919,13 @@ export const sfx = {
     trophyAt = now
     const n = TROPHY_SCALE.length
     const k = trophyRun % (2 * n - 2)
-    const f = TROPHY_SCALE[k < n ? k : 2 * n - 2 - k]
-    // LOW: one note, not a three-voice bell (they come many a second).
-    if (lite()) tone(f, { duration: 0.22, volume: 0.085 })
-    else bell(f, { volume: 0.085, decay: 0.32 })
+    play('bell', TROPHY_SCALE[k < n ? k : 2 * n - 2 - k] / 1047, true)
   },
-  /** Wins paid out (a roll's total, a badge): a fanfare, a shimmering chord and a shower of coins. */
+  /** Wins paid out (a punch's total, a badge): a fanfare, a shimmering chord and a shower of coins. */
   wins() {
     if (!ready('wins')) return
     liveCrowd()?.applause()
-    ;[784, 988, 1175, 1568].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.07, duration: 0.2, volume: 0.1, echo: true }))
-    // G major, held, each voice doubled a hair apart so it shimmers.
-    for (const f of [784, 988, 1175]) {
-      tone(f * 1.003, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05, echo: true })
-      tone(f * 0.997, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05 })
-    }
-    for (let i = 0; i < 6; i += 1) bell(2093 + Math.random() * 1200, { at: 0.3 + i * 0.07 + Math.random() * 0.03, volume: 0.035, decay: 0.2 })
+    play('wins', 1, true)
   },
   crack() {
     if (!ready('crack', 150)) return
@@ -673,20 +944,19 @@ export const sfx = {
   error() {
     if (ready('error', 200)) tone(160, { type: 'sawtooth', duration: 0.18, volume: 0.07, slideTo: 110 })
   },
+  /** A new belt: the dojo's gong, the crowd roaring, a whoosh and a bright run up the scale. */
   rebirth() {
     if (!ready('rebirth')) return
-    sfx.whistle(true)
+    gong()
     liveCrowd()?.roar(1)
     noise({ duration: 0.5, volume: 0.07, from: 200, to: 1800, q: 0.6 })
-    ;[262, 330, 392, 523, 659, 784].forEach((f, i) => tone(f, { type: 'sawtooth', at: 0.1 + i * 0.07, duration: 0.25, volume: 0.06 }))
+    ;[294, 330, 392, 440, 494, 587].forEach((f, i) => tone(f, { type: 'triangle', at: 0.15 + i * 0.07, duration: 0.25, volume: 0.07, echo: true }))
   },
-  /** Grabbing an unlocked pull-up bar: a soft rising chime, and the reps start. */
+  /** Stepping up to a training bag you can use: a soft rising chime (each punch then thwacks: bagHit). */
   treadmillEnter() {
     if (!ready('treadmillEnter', 400)) return
     ;[523, 784, 1047].forEach((f, i) => tone(f, { type: 'sine', at: i * 0.05, duration: 0.28, volume: 0.07 }))
-    treadmillStart()
   },
-  treadmillStop,
   /** A jump: a springy little boing. */
   jump() {
     if (ready('jump', 120)) tone(260, { type: 'triangle', duration: 0.18, volume: 0.1, slideTo: 620 })
@@ -697,14 +967,6 @@ export const sfx = {
     tone(140, { type: 'sine', duration: 0.12, volume: 0.12, slideTo: 70 })
     noise({ duration: 0.08, volume: 0.06, from: 900, to: 300, q: 0.7 })
   },
-  /**
-   * Settling at the end of your bounces: two soft thuds on the turf, the second smaller.
-   */
-  rollStop() {
-    if (!ready('rollStop')) return
-    tone(120, { duration: 0.16, volume: 0.1, slideTo: 55 })
-    tone(140, { at: 0.22, duration: 0.12, volume: 0.05, slideTo: 70 })
-  },
   windStart,
   windSet,
   windStop,
@@ -712,9 +974,3 @@ export const sfx = {
   stretchSet,
   stretchStop,
 }
-
-// The template's names, kept as aliases while callers move over to the tire ones.
-sfx.slideStart = sfx.rollStart
-sfx.slideStop = sfx.rollStop
-sfx.boardPop = sfx.tirePop
-sfx.boardLand = sfx.tireLand

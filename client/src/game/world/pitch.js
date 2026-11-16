@@ -26,14 +26,14 @@ import { STYLE } from '../materials'
  */
 
 /** The field: sidelines at x = +-HALF, goal lines at NORTH and SOUTH, yard lines every YARD. */
-export const PITCH = { half: 19, north: -26, south: 26, yard: 4 }
+export const PITCH = { half: 19, north: -26, south: 10, yard: 4 }
 /** The white border outside each sideline, and the running track outside that. */
 export const BORDER = { from: 19, to: 20 }
 export const TRACK = { from: 20, to: 24, lanes: [21, 22, 23, 23.95] }
 /** The circular logo at the spawn. Lines are cut back to LINE_CLEAR round it. */
-export const LOGO = { x: SPAWN.x, z: SPAWN.z, radius: 9.5 }
+export const LOGO = { x: SPAWN.x, z: SPAWN.z, radius: 7.5 }
 /** (Past the logo's polygon and its triangles' bounds, so nothing even nearly overlaps.) */
-const LINE_CLEAR = 10.6
+const LINE_CLEAR = 8.6
 
 /** How high the line boxes reach and the decals lie (each at least 3 cm off the ground and each other). */
 const LINE_TOP = 0.04
@@ -84,17 +84,17 @@ export function footballNumbers() {
  * in the image (its top is north at yaw 0), `yaw` turns it to read from where you'd see it.
  */
 export const DIRECTIONS = [
-  { text: 'LAUNCH', arrow: 'up', x: 0, z: SPAWN.z - 13, width: 8, yaw: 0 },
-  { text: 'PULL-UPS', arrow: 'right', x: 12, z: SPAWN.z + 3, width: 7, yaw: 0 },
-  { text: 'ARMS', arrow: 'left', x: -12, z: SPAWN.z - 13, width: 5.5, yaw: 0 },
-  { text: 'PETS', arrow: 'left', x: -12, z: SPAWN.z + 5, width: 5.5, yaw: 0 },
+  { text: 'PUNCH', arrow: 'up', x: 0, z: SPAWN.z - 13, width: 8, yaw: 0 },
+  { text: 'TRAIN', arrow: 'left', x: -12, z: SPAWN.z - 13, width: 7, yaw: 0 },
+  { text: 'GLOVES', arrow: 'right', x: 12, z: SPAWN.z - 13, width: 6.5, yaw: 0 },
+  { text: 'PETS', arrow: 'right', x: 12, z: SPAWN.z + 5, width: 5.5, yaw: 0 },
 ]
 /** A stencil's height for its width (its atlas cell's shape). */
 export const DIRECTION_ASPECT = 0.22
 
 /** The end zones' lettering: [text, centre z, yaw (reads from the field)]. */
 export const END_ZONE_TEXT = [
-  { text: '+1 ARM LENGTH', z: 30.4, width: 26, yaw: Math.PI },
+  { text: '+1 DOJO PUNCH', z: PITCH.south + 3.6, width: 24, yaw: Math.PI },
   // (Its words are the venue's: BACKYARD, or PALM BEACH - sceneStyle VENUES.)
   { text: 'BACKYARD', z: -29.2, width: 20, yaw: 0 },
 ]

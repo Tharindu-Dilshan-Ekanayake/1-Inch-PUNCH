@@ -2,9 +2,8 @@ import { useFrame } from '@react-three/fiber'
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Quaternion, Vector3 } from 'three'
 
-import { levelCap } from '@shared/balance'
 import { isPadUnlocked } from '@shared/logic'
-import { clampToWalkable, groundHeightAt, LAUNCH_STAND, PAD_YAW, padAt, padBarHeight, STATIC_COLLIDERS } from '@shared/world'
+import { clampToWalkable, groundHeightAt, LAUNCH_STAND, PAD_YAW, padAt, punchSpotX, STATIC_COLLIDERS } from '@shared/world'
 
 import { sfx } from '../audio/sfx'
 import { getGame } from '../store/game'
@@ -12,11 +11,8 @@ import ErrorBoundary from '../ui/ErrorBoundary'
 import FallbackAvatar from './FallbackAvatar'
 import PlayerAvatar from './PlayerAvatar'
 import { RUN_CADENCE } from './kick'
-import { actions } from '../net/actions'
-import { armGrowth } from './armStyles'
-import { cancelPull, grab, isPulling, launch, letGo, updatePull } from './launch'
-import { BODY, GRIP } from './playerPose'
-import { flierTurn, maxPullFor } from './roll/path'
+import { cancelPull, isPulling, launch, updatePull } from './launch'
+import { BAG_PUNCH_TIME, BODY, STRIKE_TIME } from './playerPose'
 import { roll } from './roll/rollControl'
 import { runtime } from './runtime'
 import useKeyboard from './useKeyboard'
@@ -30,18 +26,10 @@ const GRAVITY = 32
 const JUMP_SPEED = 10.5
 /** Ledges up to this high are walked straight onto (the showroom's back stage). */
 const STEP_UP = 1.05
-/**
- * Walking back holding the launch posts, straining against the rubber: this fast at most
- * (m/s) - quicker with longer arms, so even the full 40 m lane takes only a few seconds
- * (always well under the server's MAX_MOVE_SPEED).
- */
-const pullWalk = (maxPull) => Math.min(12, Math.max(5, maxPull / 3.6))
-/** Reaching the stand spot this close to the posts grabs them by itself. */
-const AUTO_GRAB = 0.9
-/** Walked back at least this far, stopping pulling back lets go (a launch). */
-const ARMED_BACK = 0.8
-/** Not pulling back for this long (s) lets go: a flicker of the stick doesn't. */
-const LET_GO_AFTER = 0.12
+/** Pushing the stick this hard while charging a punch walks you out of your stance. */
+const WALK_OFF = 0.6
+/** Stepping up to the punch line (m/s): brisk, but under the server's speed check. */
+const STEP_TO_LINE = 9
 
 // Scratch objects, reused each frame so the loop allocates nothing.
 const _input = new Vector3()
@@ -92,15 +80,12 @@ function pushOut(pos, rect) {
  * rectangular walls, which a circle-vs-rect push-out handles exactly. That saves the
  * ~2 MB Rapier WASM download and keeps the active rigid body count at zero.
  *
- * Walk up to the LAUNCH PAD's two posts and you grab them (or press LAUNCH, launch.js),
- * standing on the spot behind them; then your own joystick or keys walk you straight back
- * (no further than your arms reach, maxPullFor), arms stretching like rubber. Stop
- * pulling back - let go of the stick or key - and the launch is sent, no button needed;
- * the launch plays: your
- * logical position stays on the pad (what the server checks) while your avatar is slung
- * past the posts and flies down the runway (roll/path.rideState), diving flat and
- * barrel-rolling about its middle. On a pull-up bar you face east and do rubber-arm
- * pull-ups.
+ * Press PUNCH in the PUNCH ZONE (launch.js) and you step onto the punch spot and take your
+ * stance while the meter charges; press it again and the punch is sent. While it plays your
+ * logical position stays on the spot (what the server checks) while your avatar lunges
+ * off it and smashes fist-first down the walls (roll/path.rideState), diving flat and,
+ * on a PERFECT, drilling round about its middle. At a training bag you face it (east) and
+ * punch it: a jab and a cross.
  *
  * Reads and writes `runtime.player`; never touches React state per frame.
  *
@@ -110,8 +95,6 @@ export function Player({ onAvatarReady }) {
   const groupRef = useRef(null)
   const visualRef = useRef(null)
   const keys = useKeyboard()
-  /** How long you've held the posts without pulling back (seconds). */
-  const letGoTimer = useRef(0)
   const velocity = useRef(new Vector3())
   const vy = useRef(0)
 
@@ -147,20 +130,13 @@ export function Player({ onAvatarReady }) {
     const group = groupRef.current
     const visual = visualRef.current
 
-    // --- The launch posts: grabbed, walking back, let go ------------------------
-    // Walking up to the posts and reaching the spot behind them grabs them by itself.
-    if (!roll.active && !isPulling() && !player.frozen && player.grounded && !getGame().panel) {
-      if (Math.hypot(pos.x - LAUNCH_STAND.x, pos.z - LAUNCH_STAND.z) < AUTO_GRAB) {
-        grab(false)
-        sfx.stretchStart()
-      }
-    }
+    // --- The punch spot: in your stance, charging ---------------------------------
     const pulling = !roll.active && isPulling()
-    const maxPull = maxPullFor(getGame().profile.equippedTire, getGame().profile.level, levelCap(getGame().profile.rebirths))
     if (pulling && launch.snap) {
-      // Just grabbed: onto the spot behind the posts, facing down the runway.
+      // Just pressed PUNCH: your spot is the punch line straight ahead of where you stand
+      // (everyone punching lines up side by side), facing down the walls.
       launch.snap = false
-      pos.set(LAUNCH_STAND.x, groundHeightAt(LAUNCH_STAND.x, LAUNCH_STAND.z), LAUNCH_STAND.z)
+      launch.spotX = punchSpotX(pos.x)
       velocity.current.set(0, 0, 0)
     }
 
@@ -195,25 +171,14 @@ export function Player({ onAvatarReady }) {
     }
 
     if (pulling) {
-      // Holding the posts: only straight back (south, +Z) and in again, at a strained
-      // walk, no further than the arms reach. Auto Launch walks you back by itself.
-      const pullingBack = launch.auto || _move.z > WALK_SPEED * 0.15
-      const walk = pullWalk(maxPull)
-      const back = launch.auto ? walk : (_move.z / WALK_SPEED) * walk
-      _move.set(0, 0, launch.released ? 0 : back)
-      // Walked back far enough, then stopped pulling: that's the let-go. Fired from here
-      // (not a button): the meter as it stood is what the launch is graded on.
-      if (pullingBack) letGoTimer.current = 0
-      else if (launch.gripping && !launch.auto && pos.z - LAUNCH_STAND.z > ARMED_BACK) {
-        letGoTimer.current += delta
-        if (letGoTimer.current > LET_GO_AFTER) {
-          const charge = letGo()
-          sfx.stretchStop()
-          actions.roll(Math.round(charge * 1000) / 1000)
-        }
+      // In your stance you stay on the spot; pushing the stick hard walks you out of it
+      // (no punch). Waiting on the authority after letting go, you stay put either way.
+      if (launch.gripping && inputLength > WALK_OFF) {
+        cancelPull()
+        sfx.stretchStop()
+      } else {
+        _move.set(0, 0, 0)
       }
-    } else {
-      letGoTimer.current = 0
     }
 
     // Ease towards the target velocity: crisp, but no instant 0->max snaps.
@@ -225,11 +190,21 @@ export function Player({ onAvatarReady }) {
     const prevZ = pos.z
     pos.x += velocity.current.x * delta
     pos.z += velocity.current.z * delta
-    if (pulling) {
-      pos.x = LAUNCH_STAND.x
-      pos.z = Math.min(LAUNCH_STAND.z + maxPull, Math.max(LAUNCH_STAND.z, pos.z))
+    if (pulling && isPulling()) {
+      // Stepping up to your spot on the punch line, then holding it.
+      const dx = launch.spotX - pos.x
+      const dz = LAUNCH_STAND.z - pos.z
+      const d = Math.hypot(dx, dz)
+      const step = STEP_TO_LINE * delta
+      if (d <= step) {
+        pos.x = launch.spotX
+        pos.z = LAUNCH_STAND.z
+      } else {
+        pos.x += (dx / d) * step
+        pos.z += (dz / d) * step
+      }
     }
-    updatePull(now, pulling ? pos.z - LAUNCH_STAND.z : 0, maxPull)
+    updatePull(now)
 
     for (const rect of STATIC_COLLIDERS) pushOut(pos, rect)
     for (const rect of runtime.dynamicColliders) pushOut(pos, rect)
@@ -247,7 +222,7 @@ export function Player({ onAvatarReady }) {
 
     // --- Vertical ---------------------------------------------------------------
     const wantJump = !still && (k.jump || joy.jump)
-    // Jumping lets go of the posts (no launch).
+    // Jumping drops your stance (no punch).
     if (wantJump && pulling) cancelPull()
     if (wantJump && player.grounded) {
       vy.current = JUMP_SPEED
@@ -270,33 +245,39 @@ export function Player({ onAvatarReady }) {
 
     // --- Facing -----------------------------------------------------------------
     const speed = Math.hypot(velocity.current.x, velocity.current.z)
-    // Standing still under an unlocked bar: pull-ups, facing along it.
+    // Standing still at an unlocked bag: punching it, facing it.
     const pad = padAt(pos.x, pos.z)
     const training = pad >= 0 && player.grounded && speed < 0.5 && !still && isPadUnlocked(getGame().profile, pad)
     if (training) player.yaw = PAD_YAW
     else if (pulling) player.yaw = Math.PI
     else if (speed > 0.3) player.yaw = Math.atan2(velocity.current.x, velocity.current.z)
 
-    // --- Where the body is: on the ground, walked back by the stretch, or flying ---
-    const profile = getGame().profile
-    motion.grow = armGrowth(profile.equippedTire, profile.level, levelCap(profile.rebirths))
+    // --- Where the body is: on the ground (punching on the spot, too) ------------
     motion.grip = -1
     motion.strain = 0
+    motion.punch = 0
+    motion.windup = 0
+    motion.kick = 0
     motion.pitch = 0
     motion.fly = 0
     motion.sprawl = 0
     motion.cheer = 0
+    motion.tuck = 0
+    motion.squat = 0
     if (roll.active) {
-      // The launch: slung past the posts and down the runway (rollControl/path).
-      _pivot.copy(roll.position)
+      // The punch: on your spot, facing the walls - the move (a crouch, a spinning jump,
+      // landing in your stance), the punch thrown and held while its blast smashes down
+      // the runway, then a cheer (rollControl/path).
+      _pivot.set(pos.x, pos.y + BODY.pivot + roll.hop, pos.z)
       motion.grip = roll.grip
       motion.strain = roll.strain
-      motion.pitch = roll.pitch
-      motion.fly = roll.fly
-      motion.sprawl = roll.sprawl
+      motion.punch = roll.punch
+      motion.windup = roll.windup
+      motion.kick = roll.kick
       motion.cheer = roll.cheer
-      motion.reach = roll.hit === 'perfect' ? 1.9 : roll.hit === 'great' ? 1.65 : 1.4
-      if (visual) flierTurn(roll, visual.quaternion)
+      motion.tuck = roll.tuck
+      motion.squat = roll.squat
+      if (visual) visual.quaternion.setFromAxisAngle(_up, Math.PI + roll.spin)
     } else {
       // Step-ups ease in over a few frames on the visual only; the logical position
       // snaps so collision and triggers stay exact.
@@ -305,12 +286,10 @@ export function Player({ onAvatarReady }) {
       const y = steppingUp ? shownY + (pos.y - shownY) * Math.min(1, delta * 18) : pos.y
       _pivot.set(pos.x, y + BODY.pivot, pos.z)
       if (pulling) {
-        // Walked back from the posts (south, +Z: you face down the runway), gripping them;
-        // at full stretch the rubber twangs and rocks you to and fro.
-        const back = pos.z - LAUNCH_STAND.z
-        if (launch.full) _pivot.z += (1 - launch.charge) * 0.35
-        motion.grip = GRIP.ahead + back + (launch.full ? (1 - launch.charge) * 0.35 : 0)
-        motion.strain = Math.min(1, back / maxPull)
+        // In your stance, winding up as the meter charges; at full charge you shiver
+        // with the power held back.
+        motion.grip = 0
+        motion.strain = launch.released ? 1 : launch.charge
       }
       if (visual) {
         _targetQuat.setFromAxisAngle(_up, player.yaw)
@@ -324,7 +303,7 @@ export function Player({ onAvatarReady }) {
       _hip.set(0, BODY.pivot, 0).applyQuaternion(visual.quaternion)
       visual.position.set(-_hip.x, BODY.pivot - _hip.y, -_hip.z)
     }
-    shownAt.set(_pivot.x, roll.active ? _pivot.y - 0.4 : pos.y, _pivot.z)
+    shownAt.set(_pivot.x, pos.y, _pivot.z)
 
     // --- Publish motion ---------------------------------------------------------
     player.speed = speed
@@ -333,10 +312,17 @@ export function Player({ onAvatarReady }) {
     motion.speed = speed
     motion.grounded = player.grounded
     motion.vy = vy.current
-    // Under a bar: rubber-arm pull-ups (playerPose, `run`), a rep per gain.
-    motion.run = training ? 1 : 0
-    // Each bar is higher than the last: the arms stretch up to this one.
-    motion.barY = training ? padBarHeight(pad) : undefined
+    // At a bag: a punch of the combo (jab, cross, hook, uppercut) for each hit, timed so it
+    // lands as the bag takes it (net/events: player.bagPunchAt), the guard in between.
+    motion.run = 0
+    const sinceBag = (now - player.bagPunchAt) / 1000 / BAG_PUNCH_TIME
+    motion.bagPunch = training && sinceBag >= 0 && sinceBag < 1 ? Math.max(0.001, sinceBag) : 0
+    motion.bagCombo = player.bagCombo
+    // A click punch (punchInput.js), over whatever else you're doing - not in your stance,
+    // and not at a bag (the bag's own punch shows it).
+    const sinceStrike = (now - player.strikeAt) / 1000 / STRIKE_TIME
+    motion.strike = !roll.active && !pulling && !training && sinceStrike >= 0 && sinceStrike < 1 ? Math.max(0.001, sinceStrike) : 0
+    motion.strikeSide = player.strikeSide
     motion.stride += delta * (training ? RUN_CADENCE : 5 + 6 * Math.min(1, speed / WALK_SPEED))
   })
 

@@ -48,8 +48,19 @@ export function ensureQuests(profile, now) {
   return true
 }
 
-/** A quest's line for the UI: "Launch 12 times". */
-export const questText = (quest) => QUEST_TYPES[quest.type]?.text.replace('{n}', quest.target.toLocaleString('en-US')) ?? ''
+/** `n` in full with thousands commas: "12,500". */
+function withCommas(n) {
+  let s = String(Math.round(n))
+  for (let i = s.length - 3; i > (s[0] === '-' ? 1 : 0); i -= 3) s = `${s.slice(0, i)},${s.slice(i)}`
+  return s
+}
+
+/**
+ * A quest's line for the UI: "Launch 12 times". (Commas by hand, not toLocaleString: its
+ * first call loads the browser's locale data - a frame-long stall, mid-punch, the moment
+ * a quest finishes.)
+ */
+export const questText = (quest) => QUEST_TYPES[quest.type]?.text.replace('{n}', withCommas(quest.target)) ?? ''
 
 export const questDone = (quest) => quest.progress >= quest.target
 

@@ -38,7 +38,7 @@ function MenuTile({ icon, label, onClick, alert, top }) {
 }
 
 /**
- * The menu on the left, under the stats: Rebirth (with % to next), Pets, Items, Store,
+ * The menu on the left, under the stats: Belt Exam (rebirth, with % to next), Pets, Items, Store,
  * today's Quests (a badge while one's ready to claim) and the free Gift.
  */
 export function LeftMenu() {
@@ -55,7 +55,7 @@ export function LeftMenu() {
     >
       <MenuTile
         icon="rebirth"
-        label="Rebirth"
+        label="Belts"
         top={`${rebirthPct}%`}
         alert={rebirthPct >= 100}
         onClick={() => togglePanel('rebirth')}

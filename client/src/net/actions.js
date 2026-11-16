@@ -23,6 +23,8 @@ export const actions = {
    */
   roll: (accuracy) => send('roll', Number.isFinite(accuracy) ? { accuracy } : undefined),
   enterPad: (pad) => send('enterPad', { pad }),
+  /** A punch thrown with a click (game/punchInput.js); the authority rate-limits it. */
+  punch: () => send('punch'),
   leavePad: () => send('leavePad'),
   rebirth: () => send('rebirth'),
   skipRebirth: () => send('skipRebirth'),
@@ -45,7 +47,7 @@ export const actions = {
   claimQuestBonus: () => send('claimQuestBonus'),
   setSetting: (key, value) => send('setting', { key, value }),
   portal: () => send('portal'),
-  /** Picks up Palm Beach's Secret Star (the authority checks you're at it). */
+  /** Picks up the Bamboo Temple's Secret Star (the authority checks you're at it). */
   findStar: () => send('findStar'),
   /** Buys a shop item with Wins; see shop.js. */
   purchase: (productId) => send('purchase', { productId }),

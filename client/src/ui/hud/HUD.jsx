@@ -1,6 +1,3 @@
-import { useCallback } from 'react'
-
-import { setSpeedTunnelElement } from '../../game/roll/hudLink'
 import { useGame } from '../../store/game'
 import EggPanel from './EggPanel'
 import InteractPrompt from './InteractPrompt'
@@ -8,6 +5,7 @@ import LeftMenu from './LeftMenu'
 import HealthBar from './HealthBar'
 import PassButtons from './PassButtons'
 import HitFlash from './HitFlash'
+import SecretCutIn from './SecretCutIn'
 import RollButton from './RollButton'
 import RollOverlay from './RollOverlay'
 import StatsPanel from './StatsPanel'
@@ -24,22 +22,6 @@ import TopCenter from './TopCenter'
  * only the buttons themselves opt back in. While a panel is open the HUD steps aside,
  * as in the reference.
  */
-/**
- * The speed tunnel: white streaks rushing outwards and a soft haze round the screen's
- * edges, the middle left clear - the sides blur past as the ball flies. A plain DOM
- * layer under the rest of the HUD (no post-processing, so it's on every preset); the
- * roll writes its strength straight to it (hudLink.writeSpeed), never through React.
- */
-function SpeedTunnel() {
-  const ref = useCallback((el) => setSpeedTunnelElement(el), [])
-  return (
-    <div ref={ref} className="pointer-events-none absolute inset-0 overflow-hidden" style={{ opacity: 0, visibility: 'hidden' }}>
-      <div className="pp-tunnel absolute" />
-      <div className="pp-tunnel-haze absolute inset-0" />
-    </div>
-  )
-}
-
 export function HUD() {
   const panelOpen = useGame((s) => s.panel !== null)
   // While your ball flies the side menus clear out, as in the reference.
@@ -47,7 +29,6 @@ export function HUD() {
   return (
     <div className="pp-font pointer-events-none absolute inset-0 z-20 select-none">
       <div className="absolute inset-0 transition-opacity duration-150" style={{ opacity: panelOpen ? 0 : 1, visibility: panelOpen ? 'hidden' : 'visible' }}>
-        <SpeedTunnel />
         <TopBar />
         <StatsPanel />
         {/* Hidden, not unmounted, while rolling: remounting them at the moment of the
@@ -65,6 +46,7 @@ export function HUD() {
         <EggPanel />
         <RollOverlay />
         <HitFlash />
+        <SecretCutIn />
       </div>
     </div>
   )

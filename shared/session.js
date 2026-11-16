@@ -1,4 +1,4 @@
-import { comboBonus, crowdBonus, dayNumber, levelCap, EGGS, hitGrade, ITEMS, MULTI_HATCH, PADS, ROLL_TICK, SHOP, TIRES, TRAIN_INTERVAL, WALK_STEP, ZONES } from './balance.js'
+import { comboBonus, crowdBonus, dayNumber, EGGS, hitGrade, ITEMS, MULTI_HATCH, PADS, PUNCH_INTERVAL, ROLL_TICK, SHOP, TIRES, TRAIN_INTERVAL, ZONES } from './balance.js'
 import { applyStreak, claimQuest, claimQuestBonus, ensureQuests, progressQuests, questText, rollLuckyGift } from './engage.js'
 import {
   advanceTutorial,
@@ -8,7 +8,7 @@ import {
   applyRoll,
   applyRollTick,
   applyTrain,
-  applyWalkStep,
+  applyPunch,
   awardBadge,
   buyHealthPack,
   buyShopItem,
@@ -30,7 +30,7 @@ import {
   usePortal,
   usePotion,
 } from './logic.js'
-import { eggStandNear, FREE_REWARD, inRect, inRollZone, MAX_MOVE_SPEED, MAX_PULL, maxPullFor, pullBackAt, onPad, portalAt, STAR, standRect, TIRE_STANDS } from './world.js'
+import { eggStandNear, FREE_REWARD, inRect, inRollZone, onPad, portalAt, STAR, standRect, TIRE_STANDS } from './world.js'
 
 const TIRE_INDEX = Object.fromEntries(TIRES.map((t, i) => [t.id, i]))
 /** Reaching Outer Space earns its badge; the last stage has its own. */
@@ -57,7 +57,8 @@ const STAND_SLACK = 2
  * - 'profile'  { profile, session }  full state, after anything structural
  * - 'train'    { source, pad, gain, health, level, leveledUp, levels, maxed }  each
  *                Health gain; `source` is 'pad' (pad is its index), 'roll' (while your
- *                tire rolls) or 'walk' (walking round the lobby), pad -1 for both
+ *                punch smashes on) or 'punch' (a click punch away from the bags), pad -1
+ *                for both. (Walking round earns nothing: Power comes from punching.)
  * - 'roll'     { distance, wins, prize, discovered, blocked, broken, duration,
  *                multiplier, best, tireId }  a roll to replay
  * - 'pack'     { amount }  a Health pack landed
@@ -110,15 +111,13 @@ export class PlayerSession {
     /** Pad the client says it's on; verified against position every tick. */
     this.pad = -1
     this.trainTimer = 0
+    /** Server time of the last click punch (PUNCH_INTERVAL apart at most). */
+    this.lastPunchAt = -Infinity
     /** Server time until which the player's tire is out (and its result) and can't roll again. */
     this.busyUntil = 0
     /** Server time the current roll stops; Health ticks in until then. */
     this.rollingUntil = 0
     this.rollTimer = 0
-    /** Metres walked towards the next walking gain, and where the player last was. */
-    this.walked = 0
-    this.lastX = null
-    this.lastZ = 0
     this.dirty = false
   }
 
@@ -181,6 +180,23 @@ export class PlayerSession {
       this.pad = -1
     },
 
+    /**
+     * A click punch: a jab or a cross thrown wherever you are, at most one every
+     * PUNCH_INTERVAL (faster clicks are ignored). At your training bag it's the bag's
+     * next punch, its own coming a full TRAIN_INTERVAL after it; anywhere else, a plain
+     * gain. Nothing while your punch is out.
+     */
+    punch(_payload, now) {
+      if (now < this.busyUntil || now - this.lastPunchAt < PUNCH_INTERVAL * 1000) return
+      this.lastPunchAt = now
+      if (this.pad >= 0 && this.onClaimedPad()) {
+        this.trainTimer = 0
+        this.trainOnce(now)
+      } else {
+        this.gain('punch', -1, applyPunch(this.profile, now))
+      }
+    },
+
     setting({ key, value }) {
       if (key === 'autoRebirth') this.profile.settings.autoRebirth = Boolean(value)
       else if (key === 'autoRoll' && this.profile.passes.autoRoll) this.profile.settings.autoRoll = Boolean(value)
@@ -199,8 +215,9 @@ export class PlayerSession {
     },
 
     /**
-     * Kicks your ball: only from the KICK ZONE, and not while one is still out.
-     * `accuracy` (0-1) is where the timing meter stopped; absent for Auto Kick.
+     * Punches the walls: only from the PUNCH ZONE, and not while a punch is still going.
+     * `accuracy` (0-1) is where the power meter stopped; absent for Auto Punch. Every
+     * punch rolls for a hidden technique (balance SECRET_PUNCHES) with the session's rand.
      */
     roll(payload, now) {
       if (now < this.busyUntil) return
@@ -213,13 +230,10 @@ export class PlayerSession {
       this.session.combo = grade?.id === 'perfect' ? (this.session.combo || 0) + 1 : 0
       const combo = this.session.combo
       const others = Math.max(0, Math.floor(this.getOthers?.() || 0))
-      // How far back down the stretch lane you were (no further than your arms reach).
-      const reach = maxPullFor(this.profile.equippedTire, this.profile.level, levelCap(this.profile.rebirths))
-      const pulled = Math.min(reach + 0.5, pullBackAt(p.x, p.z))
-      const result = applyRoll(this.profile, now, accuracy, comboBonus(combo) * crowdBonus(others), pulled / MAX_PULL)
+      const result = applyRoll(this.profile, now, accuracy, comboBonus(combo) * crowdBonus(others), { rand: this.rand })
       const gift = rollLuckyGift(this.profile, this.rand)
       this.busyUntil = now + result.cooldown * 1000
-      this.rollingUntil = now + result.duration * 1000
+      this.rollingUntil = now + (result.hold + result.duration) * 1000
       this.rollTimer = 0
       this.pad = -1
       this.emit('roll', {
@@ -237,7 +251,8 @@ export class PlayerSession {
         combo,
         others,
         gift,
-        stretch: Math.round(pulled * 10) / 10,
+        secret: result.secret,
+        hold: result.hold,
       })
       this.onRoll?.(result)
       this.quest('launch', 1, now)
@@ -326,7 +341,7 @@ export class PlayerSession {
       this.afterReward(result)
     },
 
-    /** Picks up Palm Beach's Secret Star: only standing at it, in Palm Beach, once. */
+    /** Picks up the Bamboo Temple's Secret Star: only standing at it, in the Bamboo Temple, once. */
     findStar() {
       const p = this.getPosition()
       if (Math.hypot(p.x - STAR.x, p.z - STAR.z) > STAR.radius + 1) return
@@ -449,26 +464,11 @@ export class PlayerSession {
   }
 
   /**
-   * Metres walked on the ground since the last tick. A jump further than a few ticks of
-   * walking could cover (a teleport, a respawn, the hop back after a roll) earns nothing;
-   * the margin allows for position reports arriving in bursts.
+   * Advances training and rolling. Call at a steady rate (the room's simulation
+   * interval). Walking round earns nothing: Power comes from punching - the bags, a
+   * click punch, the punch down the runway.
    */
-  stepWalked(dt) {
-    const p = this.getPosition()
-    if (this.lastX === null) {
-      this.lastX = p.x
-      this.lastZ = p.z
-      return 0
-    }
-    const d = Math.hypot(p.x - this.lastX, p.z - this.lastZ)
-    this.lastX = p.x
-    this.lastZ = p.z
-    return d > MAX_MOVE_SPEED * Math.max(dt, 0.1) * 3 ? 0 : d
-  }
-
-  /** Advances training, rolling and walking. Call at a steady rate (the room's simulation interval). */
   tick(dt, now) {
-    const walked = this.stepWalked(dt)
     if (now < this.rollingUntil) {
       // Health trickles in all the way along the track.
       this.rollTimer += dt
@@ -484,14 +484,6 @@ export class PlayerSession {
       }
     } else {
       this.trainTimer = Math.min(this.trainTimer, TRAIN_INTERVAL * 0.5)
-      // Walking round the lobby: a gain every WALK_STEP metres.
-      if (now >= this.busyUntil) {
-        this.walked += walked
-        while (this.walked >= WALK_STEP) {
-          this.walked -= WALK_STEP
-          this.gain('walk', -1, applyWalkStep(this.profile, now))
-        }
-      }
     }
     this.profile.stats.playtime += dt
     // A minute played towards today's quests; and past midnight, a new day: fresh
@@ -517,7 +509,7 @@ export class PlayerSession {
     if (this.dirty) this.sendProfile()
   }
 
-  /** Tells the client about a Health gain from `source` ('pad', 'roll' or 'walk'). */
+  /** Tells the client about a Health gain from `source` ('pad', 'roll' or 'punch'). */
   gain(source, pad, result) {
     // At max level gains stop; there's nothing to show.
     if (result.gain > 0) {
