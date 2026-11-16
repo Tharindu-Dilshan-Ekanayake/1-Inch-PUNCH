@@ -69,11 +69,11 @@ export function LoadingScreen({ done }) {
         <img src={iconUrl('tire')} alt="" width="150" height="150" draggable={false} />
       </div>
 
-      {/* The game's name: +1 ARM over a big rainbow LENGTH, tilted like a sticker. */}
+      {/* The game's name: +1 INCH over a big rainbow PUNCH, tilted like a sticker. */}
       <h1 className="m-0 flex flex-col items-center text-center leading-none" style={{ transform: 'rotate(-3deg)' }}>
         <span style={{ fontSize: 'clamp(36px, 8vw, 84px)' }}>
           <StrokeText stroke="0.16em" gradient="linear-gradient(180deg, #ffffff 0%, #ffffff 55%, #ffe36b 56%, #ffb21e 100%)">
-            +1 ARM
+            +1 INCH
           </StrokeText>
         </span>
         <span style={{ fontSize: 'clamp(44px, 10vw, 118px)', marginTop: '-0.08em' }}>
@@ -81,11 +81,11 @@ export function LoadingScreen({ done }) {
             stroke="0.15em"
             gradient="linear-gradient(90deg, #ff4a4a 0%, #ff9a1e 18%, #ffe23a 36%, #4be05a 54%, #2fd0ff 72%, #b05cff 90%, #ff5fd2 100%)"
           >
-            LENGTH
+            PUNCH
           </StrokeText>
         </span>
         <span className="text-base md:text-xl" style={{ marginTop: '0.4em' }}>
-          <StrokeText stroke={5}>TRAIN • STRETCH • FLY • REBIRTH</StrokeText>
+          <StrokeText stroke={5}>TRAIN • CHARGE • SMASH • BELT UP</StrokeText>
         </span>
       </h1>
 

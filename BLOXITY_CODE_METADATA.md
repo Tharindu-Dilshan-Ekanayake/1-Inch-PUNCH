@@ -3,7 +3,7 @@ canDie: false
 hasScore: true
 ---
 
-# +1 Dojo Punch: Boxity integration
+# +1 Inch PUNCH: Boxity integration
 
 The player cannot die: there is no death or game-over screen. Click (or tap) anywhere to
 throw a punch and gain Power - faster at the training bags in
