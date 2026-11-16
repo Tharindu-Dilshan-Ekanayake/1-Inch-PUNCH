@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { clickPunch } from '../game/punchInput'
 import { runtime } from '../game/runtime'
+import Icon from './Icon'
 import { GRADIENTS } from './hud/style'
 
 /** Joystick travel radius, in CSS pixels. */
@@ -21,8 +23,10 @@ const roundButton = (size, background) => ({
 
 /**
  * On-screen controls for touch devices: a floating joystick that appears wherever the
- * left side of the screen is touched, and a jump button. Everything else is walking
- * onto things: the kick zone, a treadmill, a ball stand.
+ * left side of the screen is touched, a jump button in the corner and, beside it, a
+ * PUNCH button - the same as tapping the game (punchInput.clickPunch): a jab or cross
+ * anywhere, a punch at your bag, or - in the Punch Zone - the charge and release. Everything
+ * else is walking onto things: the punch zone, a training bag, a glove stand.
  *
  * Writes straight into `runtime.input` and moves the knob through refs, so dragging
  * never re-renders React.
@@ -126,6 +130,20 @@ export function TouchControls() {
           />
         </div>
       </div>
+
+      <button
+        type="button"
+        aria-label="Punch"
+        className="touch-punch pp-btn pp-chunky absolute z-20 flex touch-none items-center justify-center rounded-full text-white"
+        style={roundButton(86, GRADIENTS.redButton)}
+        onPointerDown={(e) => {
+          e.preventDefault()
+          clickPunch()
+        }}
+      >
+        <span className="pp-gloss" style={{ borderRadius: '43px 43px 24px 24px' }} />
+        <Icon name="tire" size={56} />
+      </button>
 
       <button
         type="button"

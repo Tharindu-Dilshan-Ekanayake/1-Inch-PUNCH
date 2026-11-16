@@ -32,12 +32,16 @@
   right: calc(var(--px) * 24);
   top: 34%;
 }
-/* The stick's resting spot and the jump button (TouchControls.jsx). */
+/* The stick's resting spot, the jump button and, left of it, the punch button (TouchControls.jsx). */
 .touch-joy-rest {
   top: calc(100% - 129px);
 }
 .touch-jump {
   right: 14px;
+  bottom: 14px;
+}
+.touch-punch {
+  right: 96px;
   bottom: 14px;
 }
 
@@ -63,6 +67,9 @@
     top: calc(100% - 129px - var(--px) * 300);
   }
   .touch-jump {
+    bottom: calc(14px + var(--px) * 300);
+  }
+  .touch-punch {
     bottom: calc(14px + var(--px) * 300);
   }
 }
@@ -653,4 +660,19 @@ canvas {
 @media (prefers-reduced-motion: reduce) {
   .pp-secret-band,
   .pp-secret-shine { animation-duration: 0.01s; }
+}
+
+/*
+ * On a touch screen the PUNCH button is the main control: bigger, so a thumb can't miss it
+ * (it grows upwards from its place; the one-handed reach is the same), and without the
+ * keyboard's "E" badge.
+ */
+@media (pointer: coarse) {
+  .pp-punch-wrap {
+    scale: 1.45;
+    transform-origin: 50% 100%;
+  }
+  .pp-punch-key {
+    display: none;
+  }
 }

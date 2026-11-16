@@ -218,7 +218,7 @@ export function RollButton() {
           </span>
         </div>
       )}
-      <div className="absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(290) }}>
+      <div className="pp-punch-wrap absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(290) }}>
         {!auto && (
           <ChunkyButton
             gradient={gripping ? RELEASE_GRADIENT : PUNCH_GRADIENT}
@@ -236,7 +236,7 @@ export function RollButton() {
               <StrokeText stroke={u(12)}>{gripping ? 'RELEASE!' : 'PUNCH!'}</StrokeText>
             </span>
             <span
-              className="absolute flex items-center justify-center"
+              className="pp-punch-key absolute flex items-center justify-center"
               style={{ top: u(-16), right: u(-16), width: u(46), height: u(46), borderRadius: u(10), background: '#ffffff', border: `${u(4)} solid #111`, fontSize: u(28), color: '#111' }}
             >
               E
