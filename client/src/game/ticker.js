@@ -77,7 +77,7 @@ export function startGameTicker() {
       portal: portalAt(p.x, p.z)?.id ?? null,
       freeReward: Math.hypot(p.x - FREE_REWARD.x, p.z - FREE_REWARD.z) < FREE_REWARD.radius,
     }
-    // Palm Beach's Secret Star: walking into it picks it up (asked at most once a second).
+    // the Bamboo Temple's Secret Star: walking into it picks it up (asked at most once a second).
     const { profile } = game
     if (profile.world === 1 && !profile.secretStars?.world2 && Math.hypot(p.x - STAR.x, p.z - STAR.z) < STAR.radius) {
       const now = performance.now()
@@ -94,10 +94,7 @@ export function startGameTicker() {
       if (zone.pad >= 0 && isPadUnlocked(game.profile, zone.pad)) {
         actions.enterPad(zone.pad)
         sfx.treadmillEnter()
-      } else {
-        sfx.treadmillStop()
-        if (lastPad >= 0) actions.leavePad()
-      }
+      } else if (lastPad >= 0) actions.leavePad()
       lastPad = zone.pad
     }
   }

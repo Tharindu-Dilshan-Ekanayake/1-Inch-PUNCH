@@ -1,10 +1,11 @@
-import { levelCap, nextRebirthGift, rebirthMultiplier } from '@shared/balance'
+import { beltFor, levelCap, nextRebirthGift, rebirthMultiplier, SECRET_PUNCHES } from '@shared/balance'
 import { formatMultiplier } from '@shared/format'
 import { isMaxLevel, rebirthProgress, rebirthSkipPrice } from '@shared/logic'
 
 import { sfx } from '../../audio/sfx'
 import { actions } from '../../net/actions'
 import { getGame, useGame } from '../../store/game'
+import BeltIcon from '../BeltIcon'
 import Icon from '../Icon'
 import StrokeText from '../StrokeText'
 import { ChunkyButton, Price } from '../hud/parts'
@@ -39,10 +40,29 @@ function StatCard({ kind, text }) {
 }
 
 /**
- * Rebirth, as in the reference: what you have now against what the next rebirth gives
- * (Health multiplier and max level), your progress to max level, and the Rebirth button
- * once you're there - or Skip, for Wins, before then.
+ * The BELT EXAM (a rebirth): the belt you wear against the one the exam earns you, what
+ * each gives (Power multiplier and max level), your progress to max level, and the TAKE
+ * EXAM button once you're there - or Skip, for Wins, before then.
  */
+/** A belt and its name: the one you wear, or (`next`) the one the exam earns. */
+function BeltCard({ rebirths, next = false }) {
+  const belt = beltFor(rebirths)
+  const gradient = belt.rainbow ? GRADIENTS.rainbow : `linear-gradient(180deg, #ffffff 0%, ${belt.color} 45%, ${belt.trim} 100%)`
+  return (
+    <div className="flex flex-col items-center" style={{ gap: u(4) }}>
+      <span style={{ fontSize: u(40) }}>
+        <StrokeText stroke={u(8)}>{next ? 'Next Belt' : 'Your Belt'}</StrokeText>
+      </span>
+      <BeltIcon rebirths={rebirths} size={u(150)} />
+      <span style={{ fontSize: u(52) }}>
+        <StrokeText stroke={u(11)} gradient={gradient}>
+          {belt.label}
+        </StrokeText>
+      </span>
+    </div>
+  )
+}
+
 export function RebirthPanel() {
   const rebirths = useGame((s) => s.profile.rebirths)
   const level = useGame((s) => s.profile.level)
@@ -51,6 +71,8 @@ export function RebirthPanel() {
   const skipPrice = useGame((s) => rebirthSkipPrice(s.profile))
   const canSkip = useGame((s) => s.profile.wins >= skipPrice)
   const autoRebirth = useGame((s) => s.profile.settings.autoRebirth)
+  const openPanel = useGame((s) => s.openPanel)
+  const techniques = useGame((s) => SECRET_PUNCHES.filter((t) => s.profile.secretPunches?.[t.id] > 0).length)
   const cap = levelCap(rebirths)
   const gift = nextRebirthGift(rebirths)
 
@@ -63,15 +85,11 @@ export function RebirthPanel() {
   }
 
   return (
-    <Panel title="Rebirth" icon="rebirth" width={920}>
+    <Panel title="Belt Exam" icon="rebirth" width={920}>
       <div className="grid items-center" style={{ gridTemplateColumns: '1fr auto 1fr', columnGap: u(20), rowGap: u(16) }}>
-        <div className="text-center" style={{ fontSize: u(58) }}>
-          <StrokeText stroke={u(11)}>Now</StrokeText>
-        </div>
-        <div />
-        <div className="text-center" style={{ fontSize: u(58) }}>
-          <StrokeText stroke={u(11)}>After Rebirth</StrokeText>
-        </div>
+        <BeltCard rebirths={rebirths} />
+        <Icon name="fastForward" size={u(80)} />
+        <BeltCard rebirths={rebirths + 1} next />
 
         <StatCard kind="health" text={`${formatMultiplier(rebirthMultiplier(rebirths))} Power`} />
         <Icon name="fastForward" size={u(80)} />
@@ -84,14 +102,14 @@ export function RebirthPanel() {
 
       <p className="m-0 text-center" style={{ fontSize: u(46), marginTop: u(18) }}>
         <StrokeText stroke={u(9)} gradient={PURPLE}>
-          Rebirth resets your Level and Power!
+          The exam resets your Level and Power!
         </StrokeText>
       </p>
       {gift && (
         <p className="m-0 flex items-center justify-center" style={{ fontSize: u(40), marginTop: u(8), gap: u(10) }}>
           <Icon name="egg:volcano" size={u(56)} />
           <StrokeText stroke={u(8)} gradient={GRADIENTS.gold}>
-            {gift.rebirths === rebirths + 1 ? 'This rebirth' : `Rebirth ${gift.rebirths}`} gives {gift.label}!
+            {gift.rebirths === rebirths + 1 ? `This exam gives ${gift.label}!` : `${beltFor(gift.rebirths).label}: +${gift.label}!`}
           </StrokeText>
         </p>
       )}
@@ -119,7 +137,7 @@ export function RebirthPanel() {
           border={5}
         >
           <span style={{ fontSize: u(60) }}>
-            <StrokeText stroke={u(12)}>{ready ? 'REBIRTH!' : `Need Level ${cap}`}</StrokeText>
+            <StrokeText stroke={u(12)}>{ready ? 'TAKE EXAM!' : `Need Level ${cap}`}</StrokeText>
           </span>
         </ChunkyButton>
         {!ready && (
@@ -139,8 +157,17 @@ export function RebirthPanel() {
           onChange={(e) => actions.setSetting('autoRebirth', e.target.checked)}
           style={{ width: u(34), height: u(34), accentColor: '#3fdc4a' }}
         />
-        <StrokeText stroke={u(7)}>Auto Rebirth at max level</StrokeText>
+        <StrokeText stroke={u(7)}>Auto Belt Exam at max level</StrokeText>
       </label>
+      <div className="flex justify-center" style={{ marginTop: u(14) }}>
+        <ChunkyButton onClick={() => openPanel('techniques')} gradient={GRADIENTS.purpleButton} radius={16} border={5} style={{ height: u(76), padding: `0 ${u(28)}` }}>
+          <span style={{ fontSize: u(38) }}>
+            <StrokeText stroke={u(8)}>
+              Hidden Techniques {techniques}/{SECRET_PUNCHES.length}
+            </StrokeText>
+          </span>
+        </ChunkyButton>
+      </div>
     </Panel>
   )
 }

@@ -20,6 +20,13 @@ import { normalizeProfile } from '../../shared/logic.js'
  * is moved to another pod, the session they left can never write stale progress over
  * the one they're playing in now.
  *
+ * Progress is permanent. Nothing here ever deletes or expires a profile - no TTL index,
+ * no cleanup job - so a player who comes back after a year finds everything as they
+ * left it. (Boxity's managed Mongo keeps the database for as long as the game exists.)
+ * A save that can't be read is never overwritten by a fresh one: it is copied aside
+ * first (`corrupt_profiles`). And in production the server refuses to run without
+ * MONGODB_URI rather than quietly keep progress in a temporary file.
+ *
  * Two Boxity records live here too:
  *
  * - A guest save copied into an account (`carriedTo`) is marked so it is copied once
@@ -64,6 +71,7 @@ async function openMongo(uri) {
   const profiles = db.collection('profiles')
   const kv = db.collection('kv')
   const gems = db.collection('gem_grants')
+  const corrupt = db.collection('corrupt_profiles')
   await Promise.all([
     ...Object.values(BOARDS).map((field) => profiles.createIndex({ [field]: -1 })),
     gems.createIndex({ userId: 1, applied: 1 }),
@@ -145,6 +153,9 @@ async function openMongo(uri) {
     },
     async releaseGem(transactionId, by) {
       await gems.updateOne({ _id: transactionId, appliedBy: by }, { $set: { applied: false }, $unset: { appliedAt: '', appliedBy: '' } })
+    },
+    async keepCorrupt(id, data) {
+      await corrupt.insertOne({ profileId: id, data, at: Date.now() })
     },
     async stock() {
       const doc = await kv.findOne({ _id: 'sphinxStock' })
@@ -268,6 +279,10 @@ async function openSqlite(path) {
         by,
       )
     },
+    async keepCorrupt(id, data) {
+      db.exec('CREATE TABLE IF NOT EXISTS corrupt_profiles (profile_id TEXT NOT NULL, data TEXT NOT NULL, at INTEGER NOT NULL)')
+      db.prepare('INSERT INTO corrupt_profiles (profile_id, data, at) VALUES (?, ?, ?)').run(id, data, Date.now())
+    },
     async stock() {
       return readStock()
     },
@@ -289,6 +304,11 @@ let stock = SPHINX_STOCK_DEFAULT
 
 /** Opens the database: MongoDB if MONGODB_URI is set, else the local SQLite file. */
 export async function openStorage({ mongoUri = process.env.MONGODB_URI, path = DB_PATH } = {}) {
+  // Legion always injects MONGODB_URI. Without it in production the SQLite fallback would
+  // be a scratch file that vanishes with the pod: players would lose their progress.
+  if (!mongoUri && process.env.NODE_ENV === 'production' && !process.env.ALLOW_EPHEMERAL_DB) {
+    throw new Error('MONGODB_URI is not set: refusing to run production without a permanent database')
+  }
   store = mongoUri ? await openMongo(mongoUri) : await openSqlite(path)
   stock = await store.stock()
   console.log(`[db] using ${mongoUri ? 'MongoDB' : `SQLite at ${path}`}`)
@@ -307,7 +327,12 @@ export async function loadProfile(id, name, owner) {
     try {
       raw = JSON.parse(data)
     } catch {
-      console.warn(`[db] corrupt profile for ${id}, starting fresh`)
+      console.warn(`[db] corrupt profile for ${id}, keeping a copy and starting fresh`)
+      try {
+        await store.keepCorrupt(id, String(data))
+      } catch (err) {
+        console.error(`[db] could not keep the corrupt profile for ${id}`, err)
+      }
     }
   }
   return normalizeProfile(raw, id, name)

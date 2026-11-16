@@ -26,8 +26,8 @@ const BOOST = 'linear-gradient(180deg, #fff6a8 0%, #ffd52a 50%, #ff9c00 100%)'
 
 /**
  * "Level 12 ... 6/10", as in the reference: your level, and how much of the Health this
- * level needs you have. At max level it reads "MAX LEVEL 15 ... Rebirth!" and opens the
- * rebirth panel.
+ * level needs you have. At max level it reads "MAX LEVEL 15 ... Belt Exam!" and opens the
+ * belt exam (rebirth) panel.
  */
 function LevelBar() {
   const level = useGame((s) => s.profile.level)
@@ -58,7 +58,7 @@ function LevelBar() {
       <div className="absolute" style={{ left: u(10), right: u(10), top: u(5), height: u(12), borderRadius: u(6), background: 'rgba(255,255,255,0.25)' }} />
       <div className="absolute inset-0 flex items-center justify-between" style={{ padding: `0 ${u(18)}`, fontSize: u(50) }}>
         <StrokeText stroke={u(10)}>{maxed ? `MAX LEVEL ${cap}` : `Level ${level}`}</StrokeText>
-        <StrokeText stroke={u(10)}>{maxed ? 'Rebirth!' : `${formatNumber(Math.max(0, health - from))}/${formatNumber(to - from)}`}</StrokeText>
+        <StrokeText stroke={u(10)}>{maxed ? 'Belt Exam!' : `${formatNumber(Math.max(0, health - from))}/${formatNumber(to - from)}`}</StrokeText>
       </div>
     </button>
   )

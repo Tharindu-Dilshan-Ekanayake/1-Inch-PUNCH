@@ -1,24 +1,24 @@
 import { Vector3 } from 'three'
 
-import { comboBonus, HIT_GRADES, STRETCH_REACH } from '@shared/balance'
+import { comboBonus, HIT_GRADES, SECRET_PUNCHES } from '@shared/balance'
 import { formatNumber } from '@shared/format'
-import { LAUNCH_STAND, MAX_PULL, ROLL_RETURN } from '@shared/world'
+import { LAUNCH_STAND, punchSpotX, ROLL_RETURN } from '@shared/world'
 
 import { sfx } from '../../audio/sfx'
 import { getGame } from '../../store/game'
 import { fadeThrough } from '../../ui/fade'
 import { burst, fireBurst } from '../fx/fxQueue'
 import { spawnScattered } from '../fx/popups'
-import { consumePull, launch } from '../launch'
+import { consumePull } from '../launch'
 import { runtime } from '../runtime'
 import { zones } from '../worldLook'
 import { showHit } from './hudLink'
-import { createRideState, flightPeak, KICK_HIT, meterAtZ, PULL_DIST, PUSH_AHEAD, rideState, kickTimeAt } from './path'
+import { BODY_FLAT, createRideState, KICK_HIT, meterAtZ, MOVE, rideState, kickTimeAt, trackPoint } from './path'
 
+/** How big the blast's burst on the wall that holds is, by grade (Impact.jsx's scale). */
+const IMPACT_SIZE = { perfect: 30, great: 24, good: 18, weak: 12 }
 /** How long the "+N Wins" result shows over you, landed, before you're back. */
 const RESULT_HOLD_MS = 2600
-/** The skid sound starts this long before a normal stop. */
-const SKID_SOUND_LEAD = 0.9
 
 /**
  * The launch currently playing (the template's "roll"), read every frame by the camera,
@@ -50,15 +50,14 @@ export const roll = {
   tireId: 'bicycle',
   /** How well you let go (HIT_GRADES id), or null for Auto Launch. */
   hit: null,
-  /** Where you launched from: metre along the runway and how far to the side. */
+  /** Where you punched from: metre along the runway and how far to the side. */
   fromMeter: 0,
   startX: 0,
-  /** How far back the stretch had walked you (metres): the snap starts from there. */
-  pull: 0,
+  /** The hidden technique this punch landed (SECRET_PUNCHES id) or null, and its cut-in's seconds. */
+  secret: null,
+  hold: 0,
   /** PERFECTs in a row with this launch (0: not a PERFECT), and its lucky gift or null. */
   combo: 0,
-  /** Metres of the stretch lane the server paid this launch for (STRETCH_REACH). */
-  stretch: 0,
   gift: null,
   /** performance.now() of the last landing, take-off and wall hit, for dust, shake and sound. */
   landedAt: 0,
@@ -92,6 +91,15 @@ export const roll = {
    */
   lag: 0,
   lastNow: 0,
+  /**
+   * The punch as shown (see showPace): where it really is (meter is where it's shown),
+   * when this shot started (seconds on the punch's clock, -1 before the first) and from
+   * what metre, and how many times the picture has cut ahead so far.
+   */
+  realMeter: 0,
+  shotAt: -1,
+  shotFrom: 0,
+  cuts: 0,
 }
 
 /** How long each smash's slow motion lasts, how slow, and how fast the clock catches up. */
@@ -132,7 +140,9 @@ export function advanceRoll(clockTime) {
   // All caught up by half a second before the stop.
   const left = roll.duration - (now - roll.startedAt) / 1000
   roll.lag = Math.min(roll.lag, Math.max(0, left - 0.5) * 400)
-  rideState((now - roll.startedAt - roll.lag) / 1000, roll, 0, roll)
+  const elapsed = (now - roll.startedAt - roll.lag) / 1000
+  rideState(elapsed, roll, roll.startX, roll)
+  if (roll.phase !== 'launch') showPace(elapsed)
   if (wasWaiting && roll.phase !== 'launch') {
     roll.kickedAt = now
     blastOff(now)
@@ -148,8 +158,10 @@ export function advanceRoll(clockTime) {
     roll.impactAt = now
     roll.impact.copy(roll.position)
     roll.impactMeter = roll.meter
-    roll.impactPeak = flightPeak(roll.distance - roll.fromMeter - PUSH_AHEAD, roll.hit)
-    sfx.groundSmash(Math.min(1, roll.impactPeak / 32))
+    // The blast bursting on the wall that holds: a shockwave across the runway (Impact.jsx)
+    // as big as the punch was good, and a boom.
+    roll.impactPeak = IMPACT_SIZE[roll.hit] ?? 18
+    sfx.groundSmash(Math.min(1, roll.impactPeak / 30))
   }
   // Each belly bounce on the turf after it: a thud, softer every time.
   if (roll.bounces > wasBounces && wasBounces > 0) sfx.bounce(roll.bounces - 1)
@@ -158,6 +170,53 @@ export function advanceRoll(clockTime) {
     sfx.wallBlock()
   }
   return roll
+}
+
+/**
+ * The punch on screen never goes faster than SHOW_SPEED (m/s). A strong punch's force
+ * really tears down the runway at hundreds of metres a second: far too fast to watch -
+ * the walls strobe past and it's hard on the eyes. So it's shown in shots. In each, the
+ * force goes at most SHOW_SPEED, wall after wall bursting at a pace you can follow; once
+ * it has fallen CUT_GAP behind where the punch really is (and the shot has run SHOT_MIN),
+ * the picture cuts ahead to it and a new shot starts there. Near the end the punch slows
+ * under SHOW_SPEED and the last walls go at their real pace, so it still stops exactly
+ * where and when the authority said.
+ */
+const SHOW_SPEED = 55
+const CUT_GAP = 24
+const SHOT_MIN = 1.6
+/** In the last LAST_CALL seconds a shot may be cut short (to SHOT_LEAST) to catch up. */
+const LAST_CALL = 1.6
+const SHOT_LEAST = 0.6
+
+/**
+ * Paces the ride state just computed for `elapsed` (see SHOW_SPEED): roll.meter, position
+ * and speed become what's shown, roll.realMeter where the punch really is, and roll.cuts
+ * counts the cuts (the camera jumps with each).
+ */
+function showPace(elapsed) {
+  const real = roll.meter
+  roll.realMeter = real
+  if (roll.shotAt < 0) {
+    roll.shotAt = elapsed
+    roll.shotFrom = real
+  }
+  const ran = elapsed - roll.shotAt
+  let shown = roll.shotFrom + Math.min(real - roll.shotFrom, SHOW_SPEED * ran)
+  const late = kickTimeAt(1, roll.duration) - elapsed < LAST_CALL
+  // Cut ahead: the shot has run long enough and fallen too far behind - or, landed on the
+  // wall that holds, the punch is always seen where it really is.
+  if ((real - shown > CUT_GAP && ran >= (late ? SHOT_LEAST : SHOT_MIN)) || (roll.crashed && real - shown > 0.5)) {
+    roll.shotAt = elapsed
+    roll.shotFrom = real
+    roll.cuts += 1
+    shown = real
+  }
+  if (shown < real) {
+    roll.meter = shown
+    roll.speed = Math.min(roll.speed, SHOW_SPEED)
+    trackPoint(shown, roll.x, BODY_FLAT + roll.air, roll.position)
+  }
 }
 
 /**
@@ -182,15 +241,19 @@ const HIT_FX = {
  * (Roll.jsx). A WEAK one just flops off the rubber.
  */
 function blastOff(now) {
+  // Every punch: a kick of dust off the floor round your feet as you drive into it.
+  const feet = runtime.player.position
+  burst({ x: feet.x, y: feet.y + 0.15, z: feet.z - 0.3, count: 22, palette: 'dust', speed: 4.5 })
   const grade = HIT_GRADES.find((g) => g.id === roll.hit)
   if (!grade) return
   const fx = HIT_FX[grade.id]
   const p = roll.position
   if (fx.count) burst({ x: p.x, y: p.y, z: p.z, count: fx.count, palette: fx.palette, speed: fx.speed })
-  // The stretch: metres walked back, and how much further that flings you.
-  if (roll.stretch >= 1) {
-    const extra = Math.round((STRETCH_REACH * roll.stretch * 100) / MAX_PULL)
-    spawnScattered(`${Math.round(roll.stretch)}m STRETCH! +${extra}% FLY`, { scale: 1.1 + Math.min(0.5, roll.stretch / 60) })
+  // A hidden technique: its name bursts off you as you go.
+  const technique = SECRET_PUNCHES.find((s) => s.id === roll.secret)
+  if (technique) {
+    spawnScattered(`${technique.name.toUpperCase()}! x${technique.power} POWER`, { scale: 1.45 })
+    burst({ x: p.x, y: p.y + 0.5, z: p.z, count: 70, palette: 'gold', speed: 14 })
   }
   // PERFECTs in a row: the combo and the Wins it adds.
   if (grade.id === 'perfect' && roll.combo >= 2) {
@@ -214,23 +277,23 @@ function blastOff(now) {
 }
 
 /**
- * Starts a launch the authority already resolved, from wherever your stretch had walked
- * you back to: the rubber snaps, you're slung past the posts, and off you fly. (Auto
- * Launch, and a launch the stretch had already let go of, start from full stretch.)
+ * Starts a punch the authority already resolved, from the punch spot: the wind-up, the
+ * lunge, and off you smash down the walls (roll/Walls.jsx breaks them as you go). A
+ * hidden technique first plays its cut-in while you hold the wind-up.
  */
 export function beginRoll(result) {
   clearTimers()
   const game = getGame()
-  const p = runtime.player.position
-  // How far back you'd walked from the posts' stand spot (your logical position: the
-  // server saw you there too). Auto Launch walks you all the way back as well.
-  const stretched = launch.gripping || launch.released
   consumePull()
-  const back = Math.max(0, p.z - LAUNCH_STAND.z)
+  // A technique landed for the first time: it goes in the book (said once the punch is over).
+  const newTechnique = result.secret && !(game.profile.secretPunches?.[result.secret] > 0) ? SECRET_PUNCHES.find((s) => s.id === result.secret) : null
+  // A hidden technique holds the punch for its cut-in first (the authority counted it in).
+  const holdMs = Math.max(0, Number(result.hold) || 0) * 1000
+  const at = (seconds) => holdMs + seconds * 1000
   Object.assign(roll, {
     active: true,
     stopped: false,
-    startedAt: performance.now(),
+    startedAt: performance.now() + holdMs,
     distance: result.distance,
     duration: result.duration,
     wins: result.wins,
@@ -242,10 +305,11 @@ export function beginRoll(result) {
     tireId: result.tireId || game.profile.equippedTire,
     hit: result.hit ?? null,
     fromMeter: meterAtZ(LAUNCH_STAND.z),
-    startX: LAUNCH_STAND.x,
-    pull: stretched || back > 0.2 ? back : PULL_DIST,
+    // Your spot on the punch line: the punch goes straight down the runway from it.
+    startX: punchSpotX(runtime.player.position.x),
+    secret: result.secret || null,
+    hold: holdMs / 1000,
     combo: result.combo || 0,
-    stretch: result.stretch || 0,
     gift: result.gift || null,
     landedAt: 0,
     tookOffAt: 0,
@@ -258,8 +322,12 @@ export function beginRoll(result) {
     frameKey: -1,
     lag: 0,
     lastNow: 0,
+    realMeter: 0,
+    shotAt: -1,
+    shotFrom: 0,
+    cuts: 0,
   })
-  rideState(0, roll, 0, roll)
+  rideState(0, roll, roll.startX, roll)
   runtime.player.frozen = true
   // Square up to the runway.
   runtime.player.yaw = Math.PI
@@ -278,14 +346,21 @@ export function beginRoll(result) {
   }
   timers.push(setTimeout(() => game.startRoll(started), 0))
 
-  // The rubber letting go with a twang, then the whoosh past the posts.
-  sfx.rubberSnap(Math.min(1, roll.pull / PULL_DIST))
-  timers.push(setTimeout(() => sfx.rollStart(), KICK_HIT * 1000))
-  // A cartoon whistle as you fall from the top of the arc, ending as you slam down.
-  const apex = kickTimeAt(0.5, result.duration)
-  const land = kickTimeAt(1, result.duration)
-  timers.push(setTimeout(() => sfx.fallWhistle(land - apex), apex * 1000))
-  timers.push(setTimeout(() => sfx.rollStop(), Math.max(0, result.duration - SKID_SOUND_LEAD) * 1000))
+  // A hidden technique: the cut-in (SecretCutIn.jsx) while you hold the pose.
+  if (result.secret) {
+    timers.push(setTimeout(() => game.showSecret(result.secret), 0))
+    sfx.perfectHit()
+  }
+  // The move: a rush of air as you spring up spinning, a thump and a puff of dust as you
+  // land in your stance, then the punch landing.
+  timers.push(setTimeout(() => sfx.windUp(), at(KICK_HIT * MOVE.takeoff)))
+  timers.push(
+    setTimeout(() => {
+      sfx.jumpLand()
+      fireBurst(roll.startX, 0.05, LAUNCH_STAND.z, 'turf')
+    }, at(KICK_HIT * MOVE.land)),
+  )
+  timers.push(setTimeout(() => sfx.punchImpact(), at(KICK_HIT)))
   timers.push(
     setTimeout(() => {
       roll.stopped = true
@@ -293,6 +368,7 @@ export function beginRoll(result) {
       const f = roll.position
       burst({ x: f.x, y: f.y + 1.8, z: f.z, count: 50, palette: 'gold', speed: 9 })
       game.endRoll()
+      if (newTechnique) game.showToast(`NEW TECHNIQUE: ${newTechnique.name}! It's in your book (Belts > Techniques)`)
       // A stage reached for the first time ever: its name and the prize, once.
       const stages = zones()
       for (const zi of roll.discovered) {
@@ -314,13 +390,13 @@ export function beginRoll(result) {
         )
       }
       timers.push(setTimeout(() => fadeThrough(finishRoll), RESULT_HOLD_MS))
-    }, result.duration * 1000),
+    }, at(result.duration)),
   )
 }
 
 /**
- * Back at the start, just short of the launch pad, camera behind you. With Auto Launch
- * on you stay on the pad instead, so the next launch goes straight away.
+ * Back at the start, just short of the punch spot, camera behind you. With Auto Punch
+ * on you stay in the zone instead, so the next punch goes straight away.
  */
 export function finishRoll() {
   clearTimers()

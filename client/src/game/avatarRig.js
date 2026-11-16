@@ -15,7 +15,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 import { BACK_BONE, HAT_BONE, NECK_OFFSET_BONE, PART_SLOTS, WORN_SLOTS } from '../bloxity/avatarAssets'
-import { patchArmMaterial } from './armStyles'
+import { GLOVE_FIT, patchArmMaterial } from './armStyles'
 import { computePose, POSED_BONES } from './playerPose'
 
 /**
@@ -76,6 +76,17 @@ export function collectRig(root) {
     armLen: 0,
     /** The proportions' armLength, as last applied (the stretch is measured against it). */
     armLengthScale: 1,
+    /** The torso's bounds in the bind pose (model space), for fitting the belt; null if none. */
+    torsoBox: null,
+    /** Each forearm bone's rest orientation in character space, inverted (the gloves' twist). */
+    forearmRestInv: {},
+    /**
+     * Each forearm's middle line, in that forearm bone's own frame: `elbow` and `end` (the
+     * bottom of the hand), both on the arm MESH's centre line - which on player.glb runs
+     * 0.4 units behind the bones - so a glove sits on the hand, not beside it. Missing for
+     * a rig without arm meshes (a custom character): the bones' own line then.
+     */
+    forearmLine: {},
   }
 
   const meshBySlot = new Map(
@@ -166,6 +177,38 @@ export function collectRig(root) {
       rig.handPoint = handBone.worldToLocal(palm)
       rig.handRestInv = rootQuatInv.clone().multiply(handBone.getWorldQuaternion(new Quaternion())).invert()
     }
+
+    // The forearms' rest orientations, so the gloves turn with the forearms' twist.
+    for (const name of ['ArmL2', 'ArmR2']) {
+      const bone = skeleton.bones.find((b) => b.name === name)
+      if (bone) rig.forearmRestInv[name] = rootQuatInv.clone().multiply(bone.getWorldQuaternion(new Quaternion())).invert()
+    }
+    // ...and each forearm's middle line, measured on its arm mesh in the bind pose.
+    for (const [name, slot, leafName] of [
+      ['ArmL2', 'arm_L', 'ArmL2_leaf'],
+      ['ArmR2', 'arm_R', 'ArmR2_leaf'],
+    ]) {
+      const bone = skeleton.bones.find((b) => b.name === name)
+      const leaf = skeleton.bones.find((b) => b.name === leafName)
+      const mesh = rig.partMeshes[slot]
+      if (!bone || !leaf || !mesh) continue
+      const box = new Box3().setFromObject(mesh)
+      if (!Number.isFinite(box.min.y) || box.max.y <= box.min.y) continue
+      const cx = (box.min.x + box.max.x) / 2
+      const cz = (box.min.z + box.max.z) / 2
+      const elbowY = bone.getWorldPosition(new Vector3()).y
+      const endY = Math.min(box.min.y, leaf.getWorldPosition(new Vector3()).y)
+      rig.forearmLine[name] = {
+        elbow: bone.worldToLocal(new Vector3(cx, elbowY, cz)),
+        end: bone.worldToLocal(new Vector3(cx, endY, cz)),
+        // The hand's size across and front to back (rig units): the glove is fitted to it.
+        width: box.max.x - box.min.x,
+        depth: box.max.z - box.min.z,
+      }
+    }
+
+    // The torso's bounds, so the belt can be tied round it snugly.
+    if (rig.partMeshes.torso) rig.torsoBox = new Box3().setFromObject(rig.partMeshes.torso)
 
     rig.hatBone = skeleton.bones.find((b) => b.name === HAT_BONE) || null
     rig.backBone = skeleton.bones.find((b) => b.name === BACK_BONE) || null
@@ -401,14 +444,15 @@ function mirrored(object) {
 }
 
 /**
- * Wears `object` (already textured) in `slot` (WORN_SLOTS) on a player.glb avatar.
+ * Wears `object` (already textured) in `slot` (a WORN_SLOTS name, or a slot entry from
+ * avatarAssets.wornSlots()) on a player.glb avatar.
  * Head and back items sit at the SDK's offsets on their bone; neck, chest and waist at
  * restInverse(bone) * translate(origin), so they follow the bone (shoulder width and
  * torso scale move the bones, so they follow those too); hands and shoes go on as a
  * pair that follows the bones' position and rotation only. Returns everything added.
  */
 export function attachAccessory(rig, slot, object) {
-  const cfg = WORN_SLOTS[slot]
+  const cfg = typeof slot === 'string' ? WORN_SLOTS[slot] : slot
   if (!cfg || !object) return []
   const bone = rig.bones[cfg.bone]?.bone
   if (!bone) return []
@@ -416,7 +460,9 @@ export function attachAccessory(rig, slot, object) {
   const rest = rig.restInverse[cfg.bone]
   if (!rest) return []
   const local = new Matrix4().copy(rest).multiply(_origin.makeTranslation(...cfg.origin))
-  if (!cfg.mirror) return [fixUnder(bone, object, local)]
+  // Following the bone's position and rotation only (hands, shoes: inheritScale false),
+  // as a pair when the slot has a mirror bone.
+  if (!cfg.mirror && cfg.inheritScale !== false) return [fixUnder(bone, object, local)]
   return wearPair(rig, cfg, object, local, new Matrix4().copy(rig.restInverse[cfg.mirror] ?? rest).multiply(_mirror).multiply(_origin.makeTranslation(...cfg.origin)))
 }
 
@@ -448,7 +494,7 @@ function wearPair(rig, cfg, object, localL, localR) {
  *   - hands, shoes: scale(anchor) * restInverse(player.glb bone) * translate(origin).
  */
 export function attachToCharacter(rig, slot, object, character, baseRestInverse, accessoryMatrix) {
-  const cfg = WORN_SLOTS[slot]
+  const cfg = typeof slot === 'string' ? WORN_SLOTS[slot] : slot
   if (!cfg || !object) return []
   const bone = rig.bones[cfg.bone]?.bone
   if (!bone) return []
@@ -757,46 +803,111 @@ const _ry = new Vector3()
 const _rz = new Vector3()
 const _rm = new Matrix4()
 const _rInv = new Matrix4()
-const ARM_ENDS = [
-  ['ArmL1', 'ArmL2_leaf'],
-  ['ArmR1', 'ArmR2_leaf'],
+const _rQ = new Quaternion()
+const _rBoneQ = new Quaternion()
+const _rParentQ = new Quaternion()
+/** Each glove's forearm: elbow bone, end of the hand. Left (instance 0), then right. */
+const FOREARMS = [
+  ['ArmL2', 'ArmL2_leaf'],
+  ['ArmR2', 'ArmR2_leaf'],
 ]
 
+/** Where the belt hangs: on Spine1, at the waist, in player.glb's model space. */
+const BELT_BONE = 'Spine1'
+const BELT_ORIGIN = [0, 2.6, 0]
+/** The belt's own band, half its width and depth (belt.js PIECES), and its height. */
+const BELT_HALF = { x: 1.07, z: 0.56, h: 0.34 }
+
 /**
- * Lays an avatar's rubber arms (armStyles.createRubberArms, a child of the avatar's group)
- * along its posed arms: each from the shoulder joint to where the arm now ends, as long
- * as the rubber has stretched it. The hand hangs palm forward, turning palm down as the
- * arm reaches out, and bends back at the wrist the more the arm points down - so arms
- * dragging along the floor drag their hands flat behind them. Run after the pose.
- * Returns false (and hides them) when not `enabled` or for a rig without those bones.
+ * Ties `belt` (belt.createBelt, in rig units) round the avatar's waist: under the Spine1
+ * bone at restInverse(bone) * translate(origin), so it follows the hips and torso (as a
+ * waist accessory does). Fitted to the torso's bind-pose bounds when it has one: just
+ * outside its sides, a little up from its bottom edge. Returns false for a rig without
+ * that bone.
  */
-export function placeRubberArms(rig, arms, enabled = true) {
+export function attachBelt(rig, belt) {
+  const bone = rig.bones[BELT_BONE]?.bone
+  const rest = rig.restInverse[BELT_BONE]
+  if (!bone || !rest) return false
+  let origin = BELT_ORIGIN
+  let sx = 1
+  let sz = 1
+  const box = rig.torsoBox
+  if (box && Number.isFinite(box.min.x) && box.max.x > box.min.x) {
+    origin = [(box.min.x + box.max.x) / 2, box.min.y + BELT_HALF.h * 0.9, (box.min.z + box.max.z) / 2]
+    sx = ((box.max.x - box.min.x) / 2 + 0.04) / BELT_HALF.x
+    sz = ((box.max.z - box.min.z) / 2 + 0.05) / BELT_HALF.z
+  }
+  belt.matrixAutoUpdate = false
+  belt.matrix.copy(rest).multiply(_origin.makeTranslation(...origin)).multiply(_origin.makeScale(belt.scale.x * sx, belt.scale.y, belt.scale.z * sz))
+  belt.matrixWorldNeedsUpdate = true
+  bone.add(belt)
+  return true
+}
+
+/**
+ * Puts an avatar's boxing gloves (armStyles.createRubberArms, a child of the avatar's
+ * group) on its hands, after the pose: each glove rides its FOREARM - from the elbow
+ * (ArmL2 / ArmR2) to the end of the hand (the `_leaf` bone) - so a bent elbow (the guard,
+ * a jab coming back) carries the glove with the hand instead of leaving it on the line
+ * from the shoulder. The glove's long axis is the forearm itself; its front (knuckle pad
+ * and thumb) turns with the forearm's own twist, from the bone's rotation against its rest
+ * pose (rig.forearmRestInv). The mitt goes on over the end of the hand and is sized to the
+ * hand's measured width and depth (`metresPerUnit`: the avatar's scale), whatever the
+ * arm's length or the avatar's proportions. Returns false (and hides them) when not
+ * `enabled` or for a rig without those bones.
+ */
+export function placeRubberArms(rig, arms, enabled = true, metresPerUnit = 0) {
   const parent = arms.parent
-  const ok = enabled && Boolean(parent) && ARM_ENDS.every(([a, b]) => rig.bones[a] && rig.bones[b])
+  const ok = enabled && Boolean(parent) && FOREARMS.every(([a, b]) => rig.bones[a] && rig.bones[b])
   arms.visible = ok
   if (!ok) return false
   parent.updateWorldMatrix(true, false)
   _rInv.copy(parent.matrixWorld).invert()
+  parent.matrixWorld.decompose(_scratchP, _rParentQ, _scratchS)
+  _rParentQ.invert()
   for (let i = 0; i < 2; i += 1) {
-    const top = rig.bones[ARM_ENDS[i][0]].bone
-    const end = rig.bones[ARM_ENDS[i][1]].bone
+    const [elbowName, endName] = FOREARMS[i]
+    const elbow = rig.bones[elbowName].bone
+    const end = rig.bones[endName].bone
     end.updateWorldMatrix(true, false)
-    _ra.setFromMatrixPosition(top.matrixWorld).applyMatrix4(_rInv)
-    _rb.setFromMatrixPosition(end.matrixWorld).applyMatrix4(_rInv)
+    // On the arm mesh's centre line where it was measured; else along the bones.
+    const line = rig.forearmLine?.[elbowName]
+    if (line) {
+      elbow.updateWorldMatrix(true, false)
+      _ra.copy(line.elbow).applyMatrix4(elbow.matrixWorld).applyMatrix4(_rInv)
+      _rb.copy(line.end).applyMatrix4(elbow.matrixWorld).applyMatrix4(_rInv)
+    } else {
+      _ra.setFromMatrixPosition(elbow.matrixWorld).applyMatrix4(_rInv)
+      _rb.setFromMatrixPosition(end.matrixWorld).applyMatrix4(_rInv)
+    }
     _rd.subVectors(_rb, _ra)
     const length = _rd.length()
     if (length < 1e-4) _rd.set(0, -1, 0)
     else _rd.divideScalar(length)
-    // Which way the palm faces: forward hanging down, down reaching out.
-    const dy = Math.abs(_rd.y)
-    _rz.set(0, dy - 1, dy).addScaledVector(_rd, -(dy * _rd.z + (dy - 1) * _rd.y))
-    if (_rz.lengthSq() < 1e-6) _rz.set(1, 0, 0).addScaledVector(_rd, -_rd.x)
-    _rz.normalize()
     _ry.copy(_rd).negate()
+    // The front of the hand: the character's forward (+Z, the way a hanging hand's
+    // knuckles face) carried by the forearm's rotation since its rest pose.
+    elbow.matrixWorld.decompose(_scratchP, _rBoneQ, _scratchS)
+    const restInv = rig.forearmRestInv?.[elbowName]
+    _rQ.copy(_rParentQ).multiply(_rBoneQ)
+    if (restInv) _rQ.multiply(restInv)
+    _rz.set(0, 0, 1).applyQuaternion(_rQ)
+    // Square it to the forearm; if it lines up with it, fall back to the side axis.
+    _rz.addScaledVector(_ry, -_rz.dot(_ry))
+    if (_rz.lengthSq() < 1e-6) _rz.set(1, 0, 0).applyQuaternion(_rQ).addScaledVector(_ry, -_ry.x)
+    _rz.normalize()
     _rx.crossVectors(_ry, _rz)
+    // Fitted to this avatar's hand: the glove is made for player.glb's (GLOVE_FIT); a
+    // wider or deeper hand gets a wider or deeper glove, so no corner of it shows.
+    if (line?.width && metresPerUnit > 0) {
+      _rx.multiplyScalar(Math.min(1.6, Math.max(0.6, (line.width * metresPerUnit) / GLOVE_FIT.width)))
+      _rz.multiplyScalar(Math.min(1.6, Math.max(0.6, (line.depth * metresPerUnit) / GLOVE_FIT.depth)))
+    }
     arms.setMatrixAt(i, _rm.makeBasis(_rx, _ry, _rz).setPosition(_ra))
-    const bend = 1.45 * Math.min(1, Math.max(0, (-_rd.y - 0.4) / 0.4))
-    arms.setPose(i, length, bend, _ra.x >= 0 ? 1 : -1)
+    // The glove's end of the hand sits on the hand's end: armLen is the forearm's length.
+    // Thumbs on the inside of each hand, towards the body, as in a guard.
+    arms.setPose(i, Math.max(0.05, length), 0, i === 0 ? -1 : 1)
   }
   arms.instanceMatrix.needsUpdate = true
   return true

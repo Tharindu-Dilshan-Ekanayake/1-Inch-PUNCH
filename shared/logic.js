@@ -28,12 +28,13 @@ import {
   ROLL_BASE,
   ROLL_H0,
   ROLL_RECOVERY,
+  SECRET_HOLD,
+  SECRET_PUNCHES,
   SECRET_STAR,
+  rollSecretPunch,
   rollDuration,
   SHOP,
   streakMultiplier,
-  STRETCH_REACH,
-  STRETCH_WINS,
   TIRES,
   TRAIN_INTERVAL,
   TROPHY_FIRST,
@@ -42,6 +43,7 @@ import {
   TUTORIAL,
   WALL_MARGIN,
   WORLD_PORTALS,
+  WORLDS,
   WORLD_ZONES,
   ZONES,
   zonesOf,
@@ -98,8 +100,10 @@ export function createProfile(id, name) {
     /** The world you're in (index into WORLDS), and whether World 2's portal is open. */
     world: 0,
     world2Unlocked: false,
-    /** Secret Stars found, by world id ('world2': Palm Beach's). */
+    /** Secret Stars found, by world id ('world2': the Bamboo Temple's). */
     secretStars: {},
+    /** The technique book: how many times you've landed each hidden technique (SECRET_PUNCHES id). */
+    secretPunches: {},
     lastPad: -1,
     lastSeen: 0,
     settings: { autoRebirth: false, autoRoll: false },
@@ -150,6 +154,9 @@ export function normalizeProfile(raw, id, name) {
   p.stats.bestZone2 = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone2) || 0))
   p.world2Unlocked = raw.world2Unlocked === true
   p.secretStars = { world2: raw.secretStars?.world2 === true }
+  p.secretPunches = Object.fromEntries(
+    SECRET_PUNCHES.filter((s) => Number.isFinite(raw.secretPunches?.[s.id]) && raw.secretPunches[s.id] > 0).map((s) => [s.id, Math.floor(raw.secretPunches[s.id])]),
+  )
   p.world = p.world2Unlocked && raw.world === 1 ? 1 : 0
   // Levels follow from Health; recompute rather than trust a stored one.
   p.level = levelFor(p.health, p.rebirths)
@@ -252,7 +259,7 @@ export function winsMultiplier(profile, now) {
   return (profile.passes.winsX2 ? 2 : 1) * (isBoostActive(profile, 'wins', now) ? 2 : 1) * streakMultiplier(streakDays(profile, now))
 }
 
-/** Palm Beach's Secret Star, once found: x2 Power for good, in every world. */
+/** the Bamboo Temple's Secret Star, once found: x2 Power for good, in every world. */
 export const starMultiplier = (profile) => (profile.secretStars?.world2 ? SECRET_STAR.power : 1)
 
 /** Everything that multiplies a Health gain except the tire and where you earn it. */
@@ -301,8 +308,8 @@ export function applyRollTick(profile, now) {
   return { ok: true, ...addHealth(profile, baseGain(profile, now)) }
 }
 
-/** One step's worth of walking round the lobby: the same gain as a roll tick. */
-export const applyWalkStep = applyRollTick
+/** A punch thrown with a click away from the training bags: the same plain gain. */
+export const applyPunch = applyRollTick
 
 /** Rebirth: +1 rebirth; Health and levels reset (Wins, tires and pets stay). */
 export function applyRebirth(profile) {
@@ -402,16 +409,18 @@ export const rollWinsAt = (health, world = 0) => baseRollWins(rollOutcome(health
  * would multiply a PERFECT kick's Wins dozens of times over late in the game. Without
  * the meter (Auto Kick) the kick is a plain x1 kick.
  */
-export function applyRoll(profile, now, accuracy = null, bonus = 1, stretch = 0) {
-  // `stretch` (0-1): how much of the 40 m stretch lane you'd walked back - further and richer.
-  const pulled = Math.min(1, Math.max(0, Number(stretch) || 0))
-  const outcome = rollOutcome(profile.health, hitReach(accuracy) * (1 + STRETCH_REACH * pulled))
+export function applyRoll(profile, now, accuracy = null, bonus = 1, { rand = null } = {}) {
+  // A hidden technique (only rolled when the caller passes `rand`: the session does):
+  // that many times your Power behind this one punch.
+  const secret = rand ? rollSecretPunch(rand) : null
+  const power = profile.health * (secret ? secret.power : 1)
+  const outcome = rollOutcome(power, hitReach(accuracy))
   const distance = Math.round(outcome.distance * 10) / 10
   const grade = hitGrade(accuracy)
   // `bonus`: the session's own multipliers (a PERFECT combo, friends in the server).
-  const multiplier = winsMultiplier(profile, now) * (grade ? grade.bonus : 1) * Math.max(1, Number(bonus) || 1) * (1 + STRETCH_WINS * pulled)
+  const multiplier = winsMultiplier(profile, now) * (grade ? grade.bonus : 1) * Math.max(1, Number(bonus) || 1)
   const world = profile.world
-  const worth = Math.round(rollReach(profile.health) * 10) / 10
+  const worth = Math.round(rollReach(power) * 10) / 10
   const wins = Math.max(1, Math.round(baseRollWins(worth, world) * multiplier))
   // First time into a zone: its discovery prize, paid once ever (once in each world).
   const zone = zoneIndexAt(distance)
@@ -429,7 +438,10 @@ export function applyRoll(profile, now, accuracy = null, bonus = 1, stretch = 0)
   profile.stats.wallsBroken += outcome.broken
   profile.stats.bestDistance = Math.max(profile.stats.bestDistance, distance)
   profile.stats[bestKey] = Math.max(profile.stats[bestKey], zone)
+  if (secret) profile.secretPunches = { ...profile.secretPunches, [secret.id]: (profile.secretPunches?.[secret.id] || 0) + 1 }
   const duration = rollDuration(distance)
+  // The technique's cut-in holds the punch for a moment before it lets go.
+  const hold = secret ? SECRET_HOLD : 0
   return {
     ok: true,
     distance,
@@ -442,7 +454,9 @@ export function applyRoll(profile, now, accuracy = null, bonus = 1, stretch = 0)
     hit: grade ? grade.id : null,
     best,
     duration,
-    cooldown: duration + ROLL_RECOVERY,
+    secret: secret ? secret.id : null,
+    hold,
+    cooldown: hold + duration + ROLL_RECOVERY,
   }
 }
 
@@ -523,7 +537,7 @@ export function skipRebirth(profile) {
 // --- Worlds -------------------------------------------------------------------------
 
 /**
- * Steps through the world portal: from World 1 into Palm Beach (opening it for good the
+ * Steps through the world portal: from World 1 into the Bamboo Temple (opening it for good the
  * first time you have the rebirths and hold the Wins - they aren't spent), or from Palm
  * Beach back home.
  */
@@ -598,7 +612,7 @@ export function hatchEgg(profile, eggId, count = 1, { paid = 'wins', rand = Math
   const egg = EGGS[eggId]
   if (!egg) return { ok: false, error: 'Unknown egg' }
   // A world's own egg hatches in that world only (eggs from rewards included).
-  if (egg.world !== undefined && (profile.world || 0) !== egg.world) return { ok: false, error: 'Hatches in Palm Beach only!' }
+  if (egg.world !== undefined && (profile.world || 0) !== egg.world) return { ok: false, error: `Hatches in ${WORLDS[egg.world]?.name ?? 'another world'} only!` }
   if (profile.pets.length + count > MAX_PET_INVENTORY) return { ok: false, error: 'Pet inventory full!' }
   if (paid === 'wins') {
     if (!egg.cost.wins) return { ok: false, error: 'This egg is premium only' }
@@ -835,7 +849,7 @@ export function advanceTutorial(profile, event) {
 
 /** Awards a badge once. Returns the badge if newly awarded. */
 /**
- * Finds Palm Beach's Secret Star (the caller checks the player is at it, in Palm Beach).
+ * Finds the Bamboo Temple's Secret Star (the caller checks the player is at it, in the Bamboo Temple).
  * Once only; false if it was already found.
  */
 export function claimSecretStar(profile) {

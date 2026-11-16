@@ -1,12 +1,13 @@
 import { useEffect } from 'react'
 
-import { crowdBonus, streakMultiplier } from '@shared/balance'
+import { beltFor, crowdBonus, streakMultiplier } from '@shared/balance'
 import { formatClock, formatNumber } from '@shared/format'
 import { streakDays } from '@shared/logic'
 
 import { remotePlayers } from '../../net/remotePlayers'
 import { useGame } from '../../store/game'
 import useNow from '../useNow'
+import BeltIcon from '../BeltIcon'
 import Icon from '../Icon'
 import StrokeText from '../StrokeText'
 import { GRADIENTS, u } from './style'
@@ -79,8 +80,8 @@ function Bonuses() {
     streakToastShown = true
     const id = setTimeout(() => {
       if (news.broke) showToast('Your streak ended... DAY 1 again - play tomorrow for x1.1 Wins!')
-      else if (news.days >= 2) showToast(`DAY ${news.days} STREAK! x${news.multiplier.toFixed(1)} Wins on every launch today!`)
-      else showToast('DAY 1 STREAK! Come back tomorrow for x1.1 Wins on every launch!')
+      else if (news.days >= 2) showToast(`DAY ${news.days} STREAK! x${news.multiplier.toFixed(1)} Wins on every punch today!`)
+      else showToast('DAY 1 STREAK! Come back tomorrow for x1.1 Wins on every punch!')
     }, 2500)
     return () => clearTimeout(id)
   }, [news, showToast])
@@ -93,14 +94,33 @@ function Bonuses() {
   )
 }
 
-/** Top-left, as in the reference: Rebirths, then Wins, with any running potions and bonuses under them. */
+/**
+ * Your belt: the belt itself, tied, and its name in its colour (the rebirths you've made,
+ * shared/balance.js BELTS).
+ */
+function BeltRow({ rebirths }) {
+  const belt = beltFor(rebirths)
+  const gradient = belt.rainbow ? GRADIENTS.rainbow : `linear-gradient(180deg, #ffffff 0%, ${belt.color} 45%, ${belt.trim} 100%)`
+  return (
+    <div className="relative flex items-center" style={{ height: u(86) }}>
+      <BeltIcon rebirths={rebirths} size={u(86)} />
+      <span key={belt.label} className="pp-bump relative" style={{ fontSize: u(50), marginLeft: u(10) }}>
+        <StrokeText stroke={u(11)} gradient={gradient}>
+          {belt.label}
+        </StrokeText>
+      </span>
+    </div>
+  )
+}
+
+/** Top-left, as in the reference: your belt, then Wins, with any running potions and bonuses under them. */
 export function StatsPanel() {
   const wins = useGame((s) => s.profile.wins - s.pendingWins)
   const rebirths = useGame((s) => s.profile.rebirths)
 
   return (
     <div className="hud-stats pointer-events-none absolute flex flex-col" style={{ contain: 'layout style' }}>
-      <StatRow icon="rebirth" value={formatNumber(rebirths)} />
+      <BeltRow rebirths={rebirths} />
       <StatRow icon="trophy" value={formatNumber(wins)} gradient={GRADIENTS.gold} />
       <Boosts />
       <Bonuses />

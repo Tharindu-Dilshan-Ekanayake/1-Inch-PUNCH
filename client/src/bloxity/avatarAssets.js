@@ -12,6 +12,7 @@
  */
 
 import { apiUrl, staticUrl } from './env'
+import { getSDK, safeCall } from './sdk'
 
 /**
  * Where avatar assets live. Built on every call from the Boxity environment (see
@@ -133,4 +134,57 @@ export function skinCompositeUrl(equipped) {
   let key = `s${skinIdOrDefault(equipped.skinId)}`
   for (const [field, prefix] of layers) key += `_${prefix}${equipped[field]}`
   return `${apiUrl()}/v1/avatar/skin-texture/${key}.png`
+}
+
+// --- From the SDK, when it has them ---------------------------------------------------
+
+
+/**
+ * Every slot worn on a bone, from Boxity: hat and back (fixed), then each slot
+ * `avatar.getAccessorySlots()` lists - hair, mask, neck, chest, waist, hand, shoes and any
+ * slot Boxity adds later - so a new slot shows up without a code change. Each entry is
+ * WORN_SLOTS-shaped: `{ type, idKey, bone, origin, mirror?, inheritScale, model?,
+ * mesh(id), texture(id) }`, its URLs from `avatar.getAccessoryUrls(field, id)`. With no
+ * SDK (or an older one) the built-in WORN_SLOTS table stands in.
+ */
+export function wornSlots() {
+  const avatar = getSDK()?.avatar
+  const fixed = ['hat', 'back'].map((type) => ({ type, ...WORN_SLOTS[type] }))
+  const listed = typeof avatar?.getAccessorySlots === 'function' ? safeCall(avatar.getAccessorySlots.bind(avatar)) : null
+  if (!Array.isArray(listed) || listed.length === 0) {
+    return Object.entries(WORN_SLOTS).map(([type, cfg]) => ({ type, ...cfg }))
+  }
+  const urlsFor = (field, id) =>
+    typeof avatar.getAccessoryUrls === 'function' ? safeCall(avatar.getAccessoryUrls.bind(avatar), field, id) || null : null
+  const slots = []
+  for (const slot of listed) {
+    if (!slot || typeof slot.field !== 'string' || typeof slot.bone !== 'string') continue
+    const fallback = WORN_SLOTS[slot.type]
+    const dir = slot.dir || slot.type
+    slots.push({
+      type: slot.type,
+      idKey: slot.field,
+      bone: slot.bone,
+      origin: Array.isArray(slot.origin) ? slot.origin : fallback?.origin ?? [0, 0, 0],
+      mirror: slot.mirrorBone || undefined,
+      inheritScale: slot.inheritScale !== false,
+      // Head items: their placement in player.glb's model space (custom characters).
+      model: Array.isArray(slot.origin) ? slot.origin : fallback?.model,
+      mesh: (id) => urlsFor(slot.field, id)?.mesh || fallback?.mesh?.(id) || assetUrls.accessoryMesh(dir, id),
+      texture: (id) => urlsFor(slot.field, id)?.texture || fallback?.texture?.(id) || assetUrls.accessoryTexture(dir, id),
+    })
+  }
+  return [...fixed, ...slots]
+}
+
+/**
+ * The body texture for a look - the skin with the worn pants, shirt and face drawn on -
+ * from `avatar.getSkinTextureUrlFor(equipped)`; without the SDK, the same URL built by
+ * hand (skinCompositeUrl, else the plain skin).
+ */
+export function skinTextureUrlFor(equipped) {
+  const avatar = getSDK()?.avatar
+  const fromSdk = typeof avatar?.getSkinTextureUrlFor === 'function' ? safeCall(avatar.getSkinTextureUrlFor.bind(avatar), equipped || {}) : null
+  if (typeof fromSdk === 'string' && fromSdk) return fromSdk
+  return skinCompositeUrl(equipped) || assetUrls.skinTexture(skinIdOrDefault(equipped?.skinId))
 }

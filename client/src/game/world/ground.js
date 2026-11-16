@@ -68,9 +68,9 @@ export function createGroundMap(maxTexture, world = 0) {
   return texture
 }
 
-/** The lobby floor: mint (or sand at Palm Beach) and a candy path down the middle (the mesas ring it). */
+/** The lobby floor: grass (or sand at Palm Beach) and a stone path down the middle (the hills ring it). */
 const PARKS = {
-  grass: { grass: ['#8fe3c0', '#9eeccb'], path: ['#ff6fae', '#ff86bc'], edge: '#ffffff', ring: '#c08cff', portal: '#a46cf0', yard: '#fff0d8' },
+  grass: { grass: ['#7fd65a', '#8ee068'], path: ['#c9c2b0', '#d6cfbc'], edge: '#ffffff', ring: '#e8262e', portal: '#a46cf0', yard: '#f4ead2' },
   beach: { grass: ['#f2dca0', '#ead196'], path: ['#2fc8d8', '#48d6e4'], edge: '#ffffff', ring: '#e2bd7a', portal: '#16b8c4', yard: '#fbeed0' },
 }
 

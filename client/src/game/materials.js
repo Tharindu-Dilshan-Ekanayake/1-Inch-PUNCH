@@ -50,13 +50,27 @@ export const STYLE = {
    * bands, under a cream frosting cap that drips a wavy way down the sides.
    */
   MESA: 15,
+  /** Wood: horizontal boards, each its own shade, with grain, dark seams and nails at the joints. */
+  PLANKS: 16,
+  /** Brick: staggered bricks, each its own shade, in pale mortar. */
+  BRICK: 17,
+  /** Stone: big dressed blocks of uneven length, mottled, in dark joints, the top edges catching the light. */
+  STONE: 18,
+  /** Metal: riveted plates with dark seams, a brushed grain and a cool sheen. */
+  METAL: 19,
+  /** Ice or glass: a clear colour with frosty cracks, diagonal shine streaks and a faint glow. */
+  ICE: 20,
+  /** A paper screen (shoji): a lattice of dark wood strips over glowing paper panes. */
+  SHOJI: 21,
+  /** Tatami: straw mats (1.8 x 0.9 m, every other row staggered) edged in dark cloth, a fine weave along each. */
+  TATAMI: 22,
 }
 
 /** Shared clock for animated styles; WorldClock advances it once per frame. */
 export const toyTime = { value: 0 }
 
 /** Cap colour for STYLE.TERRAIN blocks; the instance colour is the dirt underneath. */
-export const GRASS_COLOR = new Color('#4fd93a')
+export const GRASS_COLOR = new Color('#9fd23c')
 
 const vertexHead = /* glsl */ `
   attribute float aStyle;
@@ -220,7 +234,7 @@ const fragmentBody = /* glsl */ `
         col *= mix(0.82, 1.05, cube);
       }
       col *= toyTile(sp);
-    } else {
+    } else if (style < 16.0) {
       // Mesa: frosting on top dripping down the sides in waves, candy strata below.
       float drip = 0.55 + 0.4 * sin(vToyPos.x * 1.9 + vToyPos.z * 1.3) + 0.3 * sin((vToyPos.x - vToyPos.z) * 0.7);
       if (isTop || (vToyTop - vToyPos.y) < drip) {
@@ -230,6 +244,87 @@ const fragmentBody = /* glsl */ `
         col *= 0.8 + 0.3 * fract(sin(band * 12.9898) * 43758.5453);
       }
       col *= toyTile(sp);
+    } else {
+      // The wall materials. (along, up): position across a face and up it, in metres;
+      // "far" fades each pattern to its average once it's too fine to draw cleanly.
+      float along = an.x > 0.5 ? vToyPos.z : vToyPos.x;
+      float up = isTop ? (an.x > 0.5 ? vToyPos.x : vToyPos.z) : vToyPos.y;
+      vec2 fw = fwidth(vec2(along, up));
+      float far = smoothstep(0.05, 0.22, max(fw.x, fw.y));
+      float k = 1.0;
+      if (style < 17.0) {
+        // Planks.
+        float row = floor(up / 0.6);
+        float fy = fract(up / 0.6);
+        float u = (along + toyHash(vec2(row, 3.0)) * 3.0) / 3.2;
+        float fx = fract(u);
+        float seg = floor(u);
+        float grain = 0.92 + 0.08 * sin(along * 6.0 + sin(along * 1.3 + row * 2.1) * 2.5 + fy * 2.0);
+        float seam = smoothstep(0.0, 0.08, fy) * smoothstep(1.0, 0.92, fy) * smoothstep(0.0, 0.01, fx) * smoothstep(1.0, 0.99, fx);
+        float nail = smoothstep(0.035, 0.055, length(vec2(min(fx, 1.0 - fx) * 3.2 - 0.12, (fy - 0.5) * 0.6)));
+        k = (0.8 + 0.28 * toyHash(vec2(row, seg))) * grain * mix(0.45, 1.0, seam) * mix(0.5, 1.0, nail);
+      } else if (style < 18.0) {
+        // Brick.
+        float row = floor(up / 0.42);
+        float u = along / 0.95 + mod(row, 2.0) * 0.5;
+        vec2 f = vec2(fract(u), fract(up / 0.42));
+        float joint = min(min(f.x, 1.0 - f.x) * 0.95, min(f.y, 1.0 - f.y) * 0.42);
+        float m = smoothstep(0.018, 0.04, joint);
+        float shade = 0.8 + 0.3 * toyHash(vec2(floor(u), row));
+        vec3 brick = col * shade * (0.96 + 0.08 * toyHash(floor(vec2(along, up) * 7.0)));
+        col = mix(mix(vec3(0.86, 0.84, 0.8), brick, m), col * 0.98, far);
+      } else if (style < 19.0) {
+        // Stone.
+        float row = floor(up / 1.15);
+        float fy = fract(up / 1.15);
+        float w = 1.4 + toyHash(vec2(row, 5.0)) * 1.0;
+        float u = (along + toyHash(vec2(row, 9.0)) * 3.0) / w;
+        float fx = fract(u);
+        float joint = min(min(fx, 1.0 - fx) * w, min(fy, 1.0 - fy) * 1.15);
+        float m = smoothstep(0.03, 0.08, joint);
+        float shade = 0.76 + 0.3 * toyHash(vec2(floor(u), row));
+        float mottle = 0.9 + 0.1 * toyHash(floor(vec2(along, up) * 5.0));
+        float bevel = 1.0 + 0.14 * smoothstep(0.8, 0.97, fy) - 0.12 * smoothstep(0.2, 0.03, fy);
+        k = mix(0.42, shade * mottle * bevel, m);
+      } else if (style < 20.0) {
+        // Metal.
+        vec2 q = vec2(along / 2.4, up / 1.6);
+        vec2 f = fract(q);
+        vec2 e = min(f, 1.0 - f) * vec2(2.4, 1.6);
+        float seam = smoothstep(0.0, 0.035, min(e.x, e.y));
+        vec2 g = fract(vec2(along, up) / 0.4) - 0.5;
+        float edge = min(e.x, e.y);
+        float rivet = (1.0 - smoothstep(0.045, 0.07, length(g * 0.4))) * step(0.07, edge) * step(edge, 0.2);
+        float brush = 0.95 + 0.05 * sin(up * 70.0 + toyHash(floor(q)) * 6.0);
+        k = (0.86 + 0.18 * toyHash(floor(q))) * brush * mix(0.5, 1.0, seam) * (1.0 + 0.4 * rivet);
+        totalEmissiveRadiance += col * 0.1 * (0.6 + 0.4 * sin((along + up) * 0.8));
+      } else if (style < 21.0) {
+        // Ice / glass: slanted facets each catching the light a little differently, a
+        // broad shine sweeping across, a faint inner glow.
+        float facet = toyHash(floor(vec2(along * 0.55 + up * 0.35, up * 0.75 - along * 0.2)));
+        float shine = pow(max(0.0, sin((along + up * 1.3) * 0.42)), 18.0);
+        col = col * (0.86 + 0.22 * facet) + vec3(shine * 0.45);
+        totalEmissiveRadiance += col * 0.16;
+      } else if (style < 22.0) {
+        // Paper screen.
+        vec2 f = fract(vec2(along / 0.9, up / 1.1));
+        vec2 e = min(f, 1.0 - f) * vec2(0.9, 1.1);
+        float bar = 1.0 - smoothstep(0.04, 0.06, min(e.x, e.y));
+        vec3 paper = col * (0.97 + 0.03 * toyHash(floor(vec2(along, up) * 3.0)));
+        col = mix(paper, vec3(0.32, 0.2, 0.12), bar * (1.0 - far));
+        totalEmissiveRadiance += paper * 0.22 * (1.0 - bar);
+      } else {
+        // Tatami: mats along x, the rows staggered, dark cloth along their long edges.
+        float row = floor(up / 0.9);
+        float u = (along + mod(row, 2.0) * 0.9) / 1.8;
+        vec2 f = vec2(fract(u), fract(up / 0.9));
+        float heri = 1.0 - smoothstep(0.055, 0.075, min(f.y, 1.0 - f.y));
+        float seam = 1.0 - smoothstep(0.004, 0.009, min(f.x, 1.0 - f.x));
+        float weave = 0.96 + 0.04 * sin(up * 95.0);
+        k = (0.92 + 0.1 * toyHash(vec2(floor(u), row))) * mix(weave, 1.0, far) * (1.0 - 0.35 * seam * (1.0 - far));
+        col = mix(col, vec3(0.1, 0.13, 0.09), heri * (1.0 - far));
+      }
+      col *= mix(k, 0.92, far);
     }
 
     diffuseColor.rgb = col;
@@ -267,7 +362,7 @@ export function createToyMaterial({
       .replace('#include <color_fragment>', `#include <color_fragment>\n${fragmentBody}`)
   }
   // The stud scale is a uniform, so materials differing only in it share a program.
-  material.customProgramCacheKey = () => 'toy-v2'
+  material.customProgramCacheKey = () => 'toy-v4'
   return material
 }
 

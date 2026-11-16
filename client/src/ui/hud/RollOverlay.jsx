@@ -109,7 +109,7 @@ function RollResult({ result }) {
 }
 
 /** How long a toast stays up. */
-const TOAST_MS = 3500
+const TOAST_MS = 5000
 
 /** A celebration banner across the middle: a new zone, an ad reward, a Gems purchase. */
 function Toast() {

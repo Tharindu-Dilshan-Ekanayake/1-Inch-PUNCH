@@ -3,18 +3,15 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Color, Matrix4, Quaternion, Vector3 } from 'three'
 
 import { ROLL_RECOVERY } from '@shared/balance'
-import { levelCap } from '@shared/balance'
 import { PAD_YAW } from '@shared/world'
 
-import { armGrowth } from '../armStyles'
 
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
 import { createBoxInstances, disposeBlocks } from '../blocks'
 import { RUN_CADENCE } from '../kick'
 import { sharedMaterials, STYLE } from '../materials'
-import { BODY } from '../playerPose'
-import { flierTurn, laneFor, rideState } from '../roll/path'
+import { rideState } from '../roll/path'
 import { runtime } from '../runtime'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
 
@@ -58,8 +55,6 @@ const _up = new Vector3(0, 1, 0)
 const _target = new Vector3()
 const _dir = new Vector3()
 const _prev = new Vector3()
-const _hipDown = new Matrix4().makeTranslation(0, -BODY.pivot, 0)
-const _flyQ = new Quaternion()
 
 function lerpAngle(a, b, t) {
   let d = b - a
@@ -183,16 +178,16 @@ export function RemotePlayers() {
         const elapsed = (now - ghost.startedAt) / 1000
         if (elapsed > ghost.duration + ROLL_RECOVERY + 1) runtime.ghostRolls.delete(r.sessionId)
         else {
-          rideState(elapsed, ghost, laneFor(r.sessionId), r.flight)
+          rideState(elapsed, ghost, ghost.startX, r.flight)
           r.flying = true
         }
       }
       r.pulling = r.anim === 'pull' && !r.flying
-      if (r.flying) r.shadow.position.set(r.flight.position.x, r.flight.position.y - 0.4, r.flight.position.z)
-      else r.shadow.position.copy(r.position)
+      // Punching, they stay on their spot (the blast flies, not them).
+      r.shadow.position.copy(r.position)
 
       // --- In the lobby -----------------------------------------------------------
-      const shownAt = r.flying ? r.flight.position : r.position
+      const shownAt = r.position
       const distance = camera.position.distanceTo(shownAt)
       const visible = distance < settings.remoteDrawDistance
       r.shadow.visible = visible
@@ -200,34 +195,34 @@ export function RemotePlayers() {
 
       // Players drawn as their real avatar (RemoteAvatars) skip the blocky figure.
       if (visible && !r.fullAvatar && r.flying && instance + PARTS <= MAX_REMOTES * PARTS) {
-        // Flying flat like a superhero, arms out ahead (or sprawled, or up cheering).
+        // Punching on their spot, facing the walls: fists up, then thrown out ahead (or
+        // up cheering once it has stopped).
         const st = r.flight
-        flierTurn(st, _flyQ)
-        _base.compose(st.position, _flyQ, _s.set(1, 1, 1)).multiply(_hipDown)
-        const arms = st.cheer > 0.5 ? -2.7 + Math.sin(t * 10) * 0.3 : st.sprawl > 0.5 ? -2.3 : st.grip >= 0 ? -1.4 : -3
-        instance = writeFigure(body, instance, r, _base, 0, arms, st.fly > 0 ? 1.5 : 1)
+        _q.setFromAxisAngle(_up, Math.PI + st.spin)
+        _v.set(r.position.x, r.position.y + st.hop, r.position.z)
+        _base.compose(_v, _q, _s.set(1, 1, 1))
+        const arms = st.cheer > 0.5 ? -2.7 + Math.sin(t * 10) * 0.3 : -1.1 - 0.45 * st.punch
+        instance = writeFigure(body, instance, r, _base, 0, arms, 1)
       } else if (visible && !r.fullAvatar && instance + PARTS <= MAX_REMOTES * PARTS) {
         const walking = !running && r.speed > 0.6
         if (walking) r.walkPhase += delta * (6 + Math.min(r.speed, 10) * 0.5)
-        // Pull-ups on a bar: arms up, stretching long and snapping short each rep.
+        // Punching a bag: fists up and out in front, jabbing each punch.
         if (running) r.walkPhase += delta * RUN_CADENCE
         const swing = walking ? Math.sin(r.walkPhase) * 0.9 : 0
         const pulling = r.pulling
         _q.setFromAxisAngle(_up, running ? PAD_YAW : pulling ? Math.PI : r.yaw)
         _base.compose(r.position, _q, _s.set(1, 1, 1))
         const rep = running ? 0.5 - 0.5 * Math.cos(r.walkPhase) : 0
-        // Otherwise their rubber arms reach the floor, dragging behind as they walk.
-        const drag = 0.15 + (walking ? 0.45 + Math.sin(r.walkPhase) * 0.25 : 0)
-        const arms = running ? Math.PI : pulling ? -1.45 : drag
-        const grow = armGrowth(r.tireId, r.level, levelCap(r.rebirths || 0))
-        const stretch = running ? 1.7 - rep * 0.7 : pulling ? 3 : 1.1 + (Math.min(3, 1.95 / Math.max(0.3, Math.cos(drag))) - 1.1) * grow
+        // Otherwise their arms swing a little as they walk.
+        const drag = walking ? Math.sin(r.walkPhase) * 0.35 : 0.05
+        const arms = running ? -1.35 - rep * 0.25 : pulling ? -1.2 : drag
+        const stretch = 1
         instance = writeFigure(body, instance, r, _base, swing, arms, stretch)
       }
 
       // Name tag, just above the head (players are 1.8 tall).
       if (visible) {
-        if (r.flying) _v.set(shownAt.x, shownAt.y + 1.4, shownAt.z)
-        else _v.set(r.position.x, r.position.y + 2.05, r.position.z)
+        _v.set(r.position.x, r.position.y + 2.05, r.position.z)
         plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, r.uid)
       }
 

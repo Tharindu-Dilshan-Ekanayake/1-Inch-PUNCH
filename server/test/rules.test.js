@@ -10,6 +10,7 @@ import {
   nextRebirthGift,
   PADS,
   PETS,
+  PUNCH_INTERVAL,
   rebirthGift,
   rebirthMultiplier,
   TIRES,
@@ -44,7 +45,8 @@ import {
   usePortal,
 } from '../../shared/logic.js'
 import { PlayerSession } from '../../shared/session.js'
-import { LAUNCH_STAND, MAX_PULL, maxPullFor, PAD_X, padCenterZ, PORTALS, ROLL_ZONE, SPAWN, STAR } from '../../shared/world.js'
+import { BELTS, beltFor, rollSecretPunch, SECRET_HOLD, SECRET_PUNCHES } from '../../shared/balance.js'
+import { LAUNCH_STAND, PAD_X, padCenterZ, PORTALS, ROLL_ZONE, SPAWN, STAR } from '../../shared/world.js'
 
 const onPad = (i) => ({ x: PAD_X, y: 0.5, z: padCenterZ(i) })
 const inRollZone = () => ({ x: 0, y: 0, z: (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 })
@@ -334,6 +336,38 @@ test('training only counts on the pad the player really stands on', () => {
   assert.equal(session.pad, 0, 'a locked pad cannot be entered')
 })
 
+test('a click punch gains anywhere, at most one every PUNCH_INTERVAL', () => {
+  const pos = { x: SPAWN.x, y: 0, z: SPAWN.z }
+  const { session, profile } = makeSession(pos)
+  session.handle('punch', {}, 1000)
+  const one = profile.health
+  assert.ok(one > 0, 'a punch away from the bags still gains')
+  session.handle('punch', {}, 1100)
+  assert.equal(profile.health, one, 'clicking faster than PUNCH_INTERVAL earns nothing more')
+  session.handle('punch', {}, 1000 + PUNCH_INTERVAL * 1000)
+  assert.ok(profile.health > one)
+  // At your bag a click is that bag's punch.
+  Object.assign(pos, onPad(0))
+  session.handle('enterPad', { pad: 0 }, 2000)
+  const before = profile.health
+  session.handle('punch', {}, 3000)
+  assert.ok(profile.health > before)
+  assert.equal(session.trainTimer, 0, "the bag's own next punch waits a full interval")
+})
+
+test('walking round the lobby earns no Power', () => {
+  const pos = { x: SPAWN.x, y: 0, z: SPAWN.z }
+  const { session, profile } = makeSession(pos)
+  const before = profile.health
+  let t = 0
+  // Ten seconds at a walk, back and forth across the plaza.
+  for (let i = 0; i < 100; i += 1) {
+    pos.x = SPAWN.x + Math.sin(i * 0.1) * 6
+    session.tick(0.1, (t += 100))
+  }
+  assert.equal(profile.health, before)
+})
+
 test('the first guide step completes on the pad once Health reaches 30', () => {
   assert.equal(TUTORIAL[0].event, 'train')
   assert.equal(TUTORIAL[0].health, 30)
@@ -417,12 +451,13 @@ test('a rebirth gift is announced to the player', () => {
 
 // --- World 2 ---------------------------------------------------------------------
 
-test('World 2 has its own sixty stages at the same gates, paying more', () => {
+test('World 2 has its own sixty stages at the same gates, of the same walls, paying more', () => {
   const [w1, w2] = WORLD_ZONES
   assert.equal(w2.length, w1.length)
   assert.equal(new Set(w2.map((z) => z.id)).size, w2.length, 'unique ids')
-  assert.ok(w2.every((z) => !w1.some((o) => o.name === z.name)), 'new names')
+  assert.ok(w2.every((z) => !w1.some((o) => o.id === z.id)), 'own ids (first-visit prizes are kept apart)')
   for (let i = 0; i < w1.length; i += 1) {
+    assert.equal(w2[i].name, w1[i].name, 'the same wall material')
     assert.equal(w2[i].start, w1[i].start)
     assert.equal(w2[i].wall, w1[i].wall)
     assert.equal(w2[i].discover, w1[i].discover * WORLDS[1].wins)
@@ -479,9 +514,9 @@ test('stepping into the portal switches world and tells the client', () => {
   assert.equal(profile.world, 0)
 })
 
-// --- Palm Beach ------------------------------------------------------------------
+// --- World 2: the Bamboo Temple ------------------------------------------------------
 
-test("Palm Beach's treadmills and Beach Egg work there only", () => {
+test("World 2's treadmills and Beach Egg work there only", () => {
   const p = createProfile('a', 'A')
   const surf = PADS.findIndex((pad) => pad.id === 'surf')
   const tsunami = PADS.findIndex((pad) => pad.id === 'tsunami')
@@ -507,7 +542,7 @@ test("Palm Beach's treadmills and Beach Egg work there only", () => {
   assert.ok(eggPets.every((pet) => PETS[pet].mult < PETS.kraken.mult))
 })
 
-test("Palm Beach's Secret Star: found once, there only, for x2 Power everywhere", () => {
+test("World 2's Secret Star: found once, there only, for x2 Power everywhere", () => {
   const atStar = { x: STAR.x, y: 0, z: STAR.z }
   const { session, profile, count } = makeSession(atStar)
   session.handle('findStar', {}, 0)
@@ -531,30 +566,63 @@ test("Palm Beach's Secret Star: found once, there only, for x2 Power everywhere"
   assert.equal(far.count('star'), 0)
 })
 
-// --- The stretch lane ------------------------------------------------------------
+// --- Belts and hidden techniques -------------------------------------------------
 
-test('walking further back down the stretch lane flings you further and pays more, up to your arms reach', () => {
-  const launchFrom = (back, tire) => {
+test('every rebirth ties on the next belt, and past the last one earns stars', () => {
+  assert.equal(beltFor(0).id, 'white')
+  assert.equal(beltFor(1).id, 'yellow')
+  assert.equal(beltFor(8).id, 'black')
+  const last = BELTS.length - 1
+  assert.equal(beltFor(last).stars, 0)
+  assert.equal(beltFor(last + 3).id, BELTS[last].id)
+  assert.equal(beltFor(last + 3).stars, 3)
+  assert.match(beltFor(last + 3).label, /★3$/)
+})
+
+test('hidden techniques roll rarest first and are rarer the stronger they are', () => {
+  for (let i = 1; i < SECRET_PUNCHES.length; i += 1) {
+    assert.ok(SECRET_PUNCHES[i].chance > SECRET_PUNCHES[i - 1].chance)
+    assert.ok(SECRET_PUNCHES[i].power > SECRET_PUNCHES[i - 1].power)
+  }
+  assert.equal(rollSecretPunch(() => 0.99), null)
+  // A roll of 0 lands the very rarest.
+  assert.equal(rollSecretPunch(() => 0).id, SECRET_PUNCHES[SECRET_PUNCHES.length - 1].id)
+  // Just under 1 in 25 (and nothing rarer): the Iron Fist.
+  let n = 0
+  const rolls = [...SECRET_PUNCHES.slice(1).map(() => 0.99), 1 / 25 - 1e-6]
+  assert.equal(rollSecretPunch(() => rolls[n++]).id, 'iron')
+  // Over many punches, about 1 in 25 lands the Iron Fist.
+  let seed = 7
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+  let iron = 0
+  for (let i = 0; i < 50000; i += 1) if (rollSecretPunch(rand)?.id === 'iron') iron += 1
+  assert.ok(iron > 1600 && iron < 2400, `iron ${iron}`)
+})
+
+test('a hidden technique punches further, pays more, holds for its cut-in and goes in the book', () => {
+  const punch = (rand) => {
     const profile = createProfile('a', 'A')
     profile.health = 5000
-    if (tire) {
-      profile.ownedTires.push(tire)
-      profile.equippedTire = tire
-    }
-    const { session, events } = makeSession({ x: LAUNCH_STAND.x, y: 0, z: LAUNCH_STAND.z + back }, profile)
+    const { session, events } = makeSession({ x: LAUNCH_STAND.x, y: 0, z: LAUNCH_STAND.z }, profile)
+    session.rand = rand
     session.handle('roll', { accuracy: 0.5 }, 1000)
-    return events.find((e) => e.type === 'roll').payload
+    return { result: events.find((e) => e.type === 'roll').payload, profile, session }
   }
-  const stood = launchFrom(0)
-  const short = launchFrom(3)
-  assert.equal(stood.stretch, 0)
-  assert.ok(short.distance > stood.distance && short.wins >= stood.wins)
-  // Starter arms only reach a few metres: walking the whole lane counts no further.
-  const cheat = launchFrom(MAX_PULL)
-  assert.ok(cheat.stretch <= maxPullFor('bicycle', 1, 15) + 0.6) // (+0.5 lag slack, rounded)
-  // The best arms reach (nearly) the whole 40 m - and fly much further for it.
-  const best = TIRES[TIRES.length - 1].id
-  const far = launchFrom(MAX_PULL, best)
-  assert.ok(far.stretch > cheat.stretch * 3)
-  assert.ok(far.distance > stood.distance * 1.3)
+  const plain = punch(() => 0.99)
+  assert.equal(plain.result.secret, null)
+  assert.equal(plain.result.hold, 0)
+  // The rarest technique (rand 0 lands it; and no lucky gift... a gift is fine too).
+  const secret = punch(() => 0)
+  const best = SECRET_PUNCHES[SECRET_PUNCHES.length - 1]
+  assert.equal(secret.result.secret, best.id)
+  assert.equal(secret.result.hold, SECRET_HOLD)
+  assert.ok(secret.result.distance > plain.result.distance)
+  assert.ok(secret.result.wins > plain.result.wins)
+  assert.equal(secret.profile.secretPunches[best.id], 1)
+  // Busy for the hold as well as the punch: a second punch right after is refused.
+  secret.session.handle('roll', { accuracy: 0.5 }, 1000 + (secret.result.duration + 0.5) * 1000)
+  assert.equal(secret.profile.stats.rolls, 1)
+  // The book survives a save.
+  assert.equal(normalizeProfile(JSON.parse(JSON.stringify(secret.profile)), 'a', 'A').secretPunches[best.id], 1)
+  assert.deepEqual(normalizeProfile({ secretPunches: { nope: 3, iron: -1 } }, 'a', 'A').secretPunches, {})
 })

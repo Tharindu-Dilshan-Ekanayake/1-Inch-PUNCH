@@ -1,8 +1,9 @@
-import { TIRES, TUTORIAL, WORLDS } from '@shared/balance'
+import { beltFor, TIRES, TUTORIAL, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 
 import { sfx } from '../audio/sfx'
 import { burst, queueTrainFx } from '../game/fx/fxQueue'
+import { BAG_LAND_S } from '../game/playerPose'
 import { runtime } from '../game/runtime'
 import { beginRoll, roll } from '../game/roll/rollControl'
 import { getGame } from '../store/game'
@@ -28,8 +29,11 @@ export function handleServerEvent(type, payload) {
       if ((payload.profile.world || 0) !== (before.world || 0)) refreshRemoteWorlds()
       // Celebrate the big moments, whatever caused them.
       if (game.profileLoaded && payload.profile.rebirths > before.rebirths) {
+        // A belt exam passed: the new belt tied on in a shower of its colour, and its name.
         sfx.rebirth()
         burst({ ...atPlayer(), count: 60, speed: 9 })
+        burst({ ...atPlayer(1.2), count: 50, palette: 'gold', speed: 12 })
+        game.showToast(`BELT EXAM PASSED! You earned the ${beltFor(payload.profile.rebirths).label}!`)
       } else if (game.profileLoaded && payload.profile.ownedTires.length > before.ownedTires.length) {
         // A new ball: a shower of confetti and its name up in lights.
         sfx.buy()
@@ -51,6 +55,14 @@ export function handleServerEvent(type, payload) {
         ...(payload.source === 'pad' ? { lastPad: payload.pad } : {}),
       })
       queueTrainFx(payload)
+      // A punch of your combo at the bag (Player.jsx, playerPose bagPunch); the bag swings
+      // as it lands (TrainingBags.jsx), a beat from now.
+      if (payload.source === 'pad' && payload.pad >= 0) {
+        const now = performance.now()
+        runtime.player.bagPunchAt = now
+        runtime.player.bagCombo += 1
+        runtime.bagHits[payload.pad] = now + BAG_LAND_S * 1000
+      }
       if (payload.leveledUp) {
         sfx.levelUp()
         burst({ ...atPlayer(1.8), count: 24, palette: 'power', speed: 6 })
@@ -72,7 +84,7 @@ export function handleServerEvent(type, payload) {
     case 'streak':
       // Played past midnight: the streak's next day starts now.
       sfx.wins()
-      game.showToast(`DAY ${payload.days} STREAK! x${payload.multiplier.toFixed(1)} Wins on every launch`)
+      game.showToast(`DAY ${payload.days} STREAK! x${payload.multiplier.toFixed(1)} Wins on every punch`)
       break
 
     case 'pack':
@@ -100,7 +112,7 @@ export function handleServerEvent(type, payload) {
       break
 
     case 'star': {
-      // Palm Beach's Secret Star, found: a shower of gold and the news.
+      // the Bamboo Temple's Secret Star, found: a shower of gold and the news.
       sfx.wins()
       sfx.levelUp()
       burst({ ...atPlayer(2), count: 70, palette: 'gold', speed: 10 })
@@ -117,7 +129,7 @@ export function handleServerEvent(type, payload) {
       const world = WORLDS[payload.world]
       game.showToast(
         payload.world === 1
-          ? `WELCOME TO ${world.name.toUpperCase()}! x${world.wins} Wins on every launch!${payload.first ? ' A Secret Star is hidden here...' : ''}`
+          ? `WELCOME TO ${world.name.toUpperCase()}! x${world.wins} Wins on every punch!${payload.first ? ' A Secret Star is hidden here...' : ''}`
           : `Back in ${world.name}!`,
       )
       break

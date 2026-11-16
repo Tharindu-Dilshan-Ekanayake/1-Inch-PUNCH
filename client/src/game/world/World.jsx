@@ -12,6 +12,7 @@ import { createGroundGeometry, createGroundMap } from './ground'
 import { buildEggStands } from './eggs'
 import { buildPortalFrame } from './portalFrame'
 import { createPaintedSigns } from './signs'
+import { buildDojo } from './dojo'
 import { buildRollZone } from './rollZone'
 import { buildPads, buildShop } from './structures'
 import { buildHills } from './hills'
@@ -89,6 +90,7 @@ export function World() {
     addScoreboard(set, venueOf(world))
     const propBuilder = new PropBuilder()
     buildPads(set, propBuilder)
+    buildDojo(set, propBuilder, { detail: decorDensity >= 0.75 })
     buildShop(set, { detail: decorDensity >= 0.75, world })
     buildRollZone(set, propBuilder, { detail: decorDensity >= 0.75, world })
     buildPortalFrame(set)

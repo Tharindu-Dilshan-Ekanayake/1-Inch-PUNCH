@@ -22,15 +22,29 @@ import { getBloxityState, useBloxityStore } from './store'
 export const LEADERBOARDS = [
   { id: 'rebirths', label: 'Rebirths', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'wins', label: 'Total Wins', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
-  { id: 'distance', label: 'Longest Flight (m)', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'distance', label: 'Longest Punch (m)', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
   { id: 'playtime', label: 'Minutes Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
 ]
+
+/**
+ * Every screen the game has, for Boxity's screen ads (reported as they open:
+ * installLifecycle). There is no title menu, lobby or results screen: the game opens
+ * straight into play, and its only full-screen UI is the modal panels (shop, pets,
+ * quests, belts...). Empty settings use Boxity's layout. Gameplay banners stay OFF
+ * (the developer chose no banners while playing); gameplay is still declared so
+ * Boxity's admins can manage it.
+ */
+export const SCREENS = {
+  panel: {},
+  gameplay: {},
+}
 
 /** Once per page, right after `Legion.SDK.init()`. */
 export function setupOnce(sdk) {
   // Boxity draws the emote picker once a game says it can play emotes.
   safeCall(sdk.game?.registerFeature?.bind(sdk.game), 'emotes')
   safeCall(sdk.leaderboard?.define?.bind(sdk.leaderboard), LEADERBOARDS)
+  safeCall(sdk.ads?.declareScreens?.bind(sdk.ads), SCREENS)
 }
 
 /** Subscribes `fn` through an SDK `on*` method if it exists; returns the unsubscribe. */

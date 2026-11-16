@@ -1,4 +1,6 @@
-import { rebirthMultiplier, TUTORIAL } from '@shared/balance'
+import { useEffect, useState } from 'react'
+
+import { beltFor, rebirthMultiplier, TUTORIAL } from '@shared/balance'
 import { formatDistance, formatNumber } from '@shared/format'
 import { isMaxLevel, nextTire, zoneIndexAt } from '@shared/logic'
 
@@ -22,7 +24,7 @@ function TutorialBanner({ step }) {
   const onZone = useGame((s) => s.zone.rollZone)
   let text = current.text
   if (current.health) text += ` (${formatNumber(Math.min(health, current.health))}/${formatNumber(current.health)})`
-  if (current.event === 'roll' && onZone) text = 'Pull BACK to stretch, then let go of the stick!'
+  if (current.event === 'roll' && onZone) text = 'Press PUNCH, then press again at the top of the meter!'
   return (
     <div
       className="flex items-center"
@@ -52,11 +54,34 @@ function TutorialBanner({ step }) {
   )
 }
 
+/** The goal banner shows for SHOW_MS, then comes back by itself every EVERY_MS. */
+const SHOW_MS = 5000
+const EVERY_MS = 60000
+
 /**
- * The next goal, always in sight once the tutorial's done - something close enough to
- * chase: rebirth when you're at max level, else the next pair of arms and how far your
- * Wins are from it, else the next stage down the runway past your best flight. A tap
- * opens what it's about.
+ * Whether a reminder about `key` is showing: for SHOW_MS straight away, then again for
+ * SHOW_MS once a minute (EVERY_MS from each showing) - and straight away whenever `key`
+ * changes (a new goal is news).
+ */
+function useReminder(key) {
+  // `round` counts the showings, so a new goal arriving mid-showing restarts its time.
+  const [state, setState] = useState({ key, on: true, round: 0 })
+  if (state.key !== key) setState({ key, on: true, round: state.round + 1 })
+  useEffect(() => {
+    const id = state.on
+      ? setTimeout(() => setState((s) => ({ ...s, on: false })), SHOW_MS)
+      : setTimeout(() => setState((s) => ({ ...s, on: true, round: s.round + 1 })), EVERY_MS - SHOW_MS)
+    return () => clearTimeout(id)
+  }, [state.on, state.round])
+  return state.on && state.key === key
+}
+
+/**
+ * The next goal - something close enough to chase: the belt exam when you're at max
+ * level, else the next pair of gloves and how far your Wins are from it, else the next
+ * wall material past your best punch. A tap opens what it's about. A reminder, not a
+ * fixture: it shows for 5 s, fades away, and comes back by itself once a minute (and
+ * as soon as there's a new goal), so it never sits over the game.
  */
 function GoalBanner() {
   const profile = useGame((s) => s.profile)
@@ -65,34 +90,44 @@ function GoalBanner() {
   let text
   let progress = null
   let panel = null
+  /** Which goal it is (not how far along): a new one shows straight away. */
+  let goal
   if (isMaxLevel(profile)) {
-    text = `REBIRTH READY! Rebirth for x${rebirthMultiplier(profile.rebirths + 1)} Power`
+    text = `BELT EXAM READY! Earn your ${beltFor(profile.rebirths + 1).name} for x${rebirthMultiplier(profile.rebirths + 1)} Power`
     panel = 'rebirth'
+    goal = `exam:${profile.rebirths}`
   } else {
     const next = nextTire(profile)
     if (next) {
       const wins = Math.max(0, profile.wins - pending)
-      text = wins >= next.cost ? `You can buy ${next.name}! Visit the Arm Shop` : `Next arms: ${next.name}`
+      text = wins >= next.cost ? `You can buy ${next.name}! Visit the Glove Shop` : `Next gloves: ${next.name}`
       progress = Math.min(1, wins / Math.max(1, next.cost))
       if (wins < next.cost) text += ` (${formatNumber(wins)}/${formatNumber(next.cost)} Wins)`
+      goal = `${wins >= next.cost ? 'buy' : 'save'}:${next.name}`
     } else {
       const stages = zones()
       const nextStage = stages[Math.min(stages.length - 1, zoneIndexAt(profile.stats.bestDistance) + 1)]
-      text = `Next stage: ${nextStage.name} at ${formatDistance(nextStage.start)} (best ${formatDistance(profile.stats.bestDistance)})`
+      text = `Next: ${nextStage.name} at ${formatDistance(nextStage.start)} (best ${formatDistance(profile.stats.bestDistance)})`
       progress = Math.min(1, profile.stats.bestDistance / Math.max(1, nextStage.start))
+      goal = `stage:${nextStage.name}`
     }
   }
+  const shown = useReminder(goal)
   return (
     <button
       type="button"
-      onClick={panel ? () => openPanel(panel) : undefined}
-      className={`${panel ? 'pp-btn pointer-events-auto' : ''} relative flex flex-col items-center overflow-hidden`}
+      onClick={panel && shown ? () => openPanel(panel) : undefined}
+      aria-hidden={!shown}
+      tabIndex={shown ? 0 : -1}
+      className={`${panel && shown ? 'pp-btn pointer-events-auto' : ''} relative flex flex-col items-center overflow-hidden transition-[opacity,transform] duration-300`}
       style={{
         padding: `${u(6)} ${u(24)} ${u(progress === null ? 6 : 14)}`,
         borderRadius: u(30),
         border: `${u(4)} solid #111`,
         background: panel ? 'linear-gradient(180deg, #b4efff 0%, #4cb8ff 50%, #2477e8 100%)' : PANEL_GRADIENT,
         boxShadow: `0 ${u(4)} 0 rgba(0,0,0,0.3), inset 0 ${u(4)} 0 rgba(255,255,255,0.45)`,
+        opacity: shown ? 1 : 0,
+        transform: shown ? 'none' : `translateY(${u(-24)})`,
       }}
     >
       <span style={{ fontSize: u(32) }}>

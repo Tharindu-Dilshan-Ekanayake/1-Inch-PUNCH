@@ -5,15 +5,15 @@ import { iconUrl } from './icons'
 import StrokeText from './StrokeText'
 
 const TIPS = [
-  'Hang from a pull-up bar to gain Power automatically!',
-  'More Power = you fly further, and every metre pays Wins!',
-  'Let go at the very top of the stretch for a PERFECT launch: x1.5 distance, x1.6 Wins!',
-  'Rebirth at max level for x2, x3, x4... Power and a higher level cap.',
-  'The further you fly, the more each metre pays.',
-  'Spend Wins on stretchier arms, pets and better pull-up bars.',
+  'Stand at a training bag to punch it and gain Power!',
+  'More Power = you smash through more walls, and every metre pays Wins!',
+  'Release at the very top of the power meter for a PERFECT punch: x1.5 distance, x1.6 Wins!',
+  'Take the Belt Exam at max level: a new belt, x2, x3, x4... Power and a higher level cap.',
+  'White, yellow, orange, green... can you reach the Rainbow Belt?',
+  'Spend Wins on better gloves, pets and stronger training bags.',
   'Pets multiply all the Power you gain.',
-  'You earn Power every second you fly!',
-  'Every pair of arms looks different - collect all 24!',
+  'Every punch has a tiny chance of a HIDDEN TECHNIQUE - up to x250 Power!',
+  'Every pair of gloves looks different - collect all 24!',
 ]
 
 /**

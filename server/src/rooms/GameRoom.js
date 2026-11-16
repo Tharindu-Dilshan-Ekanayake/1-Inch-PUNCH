@@ -145,7 +145,7 @@ export class GameRoom extends Room {
         return ok
       },
       onRoll: (result) => {
-        // Everyone else watches it as a ghost tire. Excluded by session id, not by the
+        // Everyone else watches the punch smash down the walls. Excluded by session id, not by the
         // client object from the join: after a reconnect that object is stale, and the
         // roller would get their own roll back as a second tire.
         const self = this.clients.find((c) => c.sessionId === client.sessionId)
@@ -159,6 +159,9 @@ export class GameRoom extends Room {
             tireId: profile.equippedTire,
             // How well it was timed: others see the jump smash and the flight it made.
             hit: result.hit,
+            // A hidden technique holds the punch for its cut-in first.
+            secret: result.secret,
+            hold: result.hold,
             world: profile.world,
             x: player.x,
             z: player.z,

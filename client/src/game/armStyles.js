@@ -2,33 +2,29 @@ import {
   BoxGeometry,
   BufferAttribute,
   Color,
-  CylinderGeometry,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshLambertMaterial,
-  SphereGeometry,
 } from 'three'
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-
-import { armGrowth } from '@shared/balance'
 
 import { glowTime } from './glow'
 
 /**
- * How every pair of arms in the shop looks (shared/balance.js TIRES - the ids are the
- * template's, the names are arms): a procedural pattern and three colours, drawn by one
- * GLSL function (ARM_GLSL). The same function paints the arms of your Bloxity avatar
- * (patchArmMaterial, on its merged body: one draw call, one program) and the floating
- * arms on the shop's stands (createArmDisplayMesh: every stand in one draw call). No
- * textures: everything is maths on the arm's rest-pose position, so stripes and spots
- * stretch with the arm when it stretches like rubber.
+ * How every pair of gloves in the shop looks (shared/balance.js TIRES - the ids are the
+ * template's, the names are gloves): a procedural pattern and three colours, drawn by one
+ * GLSL function (ARM_GLSL). The same function paints the boxing gloves on your Bloxity
+ * avatar's hands (createRubberArms: both in one draw call) and the pairs on the shop's
+ * stands (createArmDisplayMesh: every stand in one draw call). No textures: everything is
+ * maths on the glove's position as if worn hanging, so the patterns look the same on
+ * your hands and on the stand.
  *
  *   pattern  what ARM_GLSL draws (ARM_PATTERN)
- *   a, b, c  base, design and accent colours (what each is depends on the pattern)
+ *   a, b, c  base, design and accent colours (c also paints the cuffs)
  *   glow     how much it shines on its own (0-1)
- *   skin     the avatar keeps its own skin on these arms (the starter Noodle Arms)
- *   trail    the colour of your flight's trail, speed lines and stand trim
+ *   trail    the colour of your punch's trail, speed lines and stand trim
  */
 
 export const ARM_PATTERN = {
@@ -59,8 +55,8 @@ export const ARM_PATTERN = {
 const P = ARM_PATTERN
 
 export const ARM_STYLES = {
-  bicycle: { pattern: P.SOLID, a: '#ffd86b', b: '#f2b33d', c: '#fff2b0', skin: true, trail: '#ffd86b' },
-  mountain: { pattern: P.RINGS, a: '#ff5050', b: '#ffd21f', c: '#ffffff', trail: '#ff7a5a' },
+  bicycle: { pattern: P.SOLID, a: '#f4f6fa', b: '#c9d2de', c: '#2f7bff', trail: '#9fd8ff' },
+  mountain: { pattern: P.SOLID, a: '#ff3b3b', b: '#c81e2a', c: '#ffffff', trail: '#ff7a5a' },
   wood: { pattern: P.SPOTS, a: '#7ee35a', b: '#ff6ad5', c: '#ffffff', trail: '#9dff6a' },
   stone: { pattern: P.CANDY, a: '#ff8fd0', b: '#ffffff', c: '#ff4fa8', trail: '#ff9cd6' },
   cookie: { pattern: P.JELLY, a: '#3fb8ff', b: '#9fe8ff', c: '#ffffff', glow: 0.12, trail: '#7fd8ff' },
@@ -93,9 +89,6 @@ const PARSED = Object.fromEntries(
   ]),
 )
 const styleOf = (id) => PARSED[id] || PARSED.bicycle
-
-/** How grown your rubber arms are (0-1): shared/balance armGrowth, used by the server too. */
-export { armGrowth }
 
 /** The colour of arms `id`'s trail, speed lines and glows. */
 export const armTrail = (id) => styleOf(id).trail
@@ -317,53 +310,107 @@ export function setArmLook(material, id, hide = false) {
   u.uArmA.value.copy(s.a)
   u.uArmB.value.copy(s.b)
   u.uArmC.value.copy(s.c)
-  u.uArmStyle.value = [s.pattern, s.glow, s.skin ? 0 : 1, hide ? 1 : 0]
+  // The avatar keeps its own arms (the gloves go on over its hands): never painted, never
+  // folded away. (The pattern is kept for anything that wants it.)
+  u.uArmStyle.value = [s.pattern, s.glow, 0, 0]
 }
 
-// --- The shop's floating arms -----------------------------------------------------------
+/// --- The boxing glove ---------------------------------------------------------------------
 
 /**
- * A flexing arm, built straight out of a few rounded pieces: a cuff at the shoulder, the
- * upper arm lying sideways, the forearm standing up from the elbow, a bulging bicep and
- * a blocky fist with knuckles and a thumb on top. Low-poly (~450 triangles): they're seen
- * from across the plaza. Each piece carries `aArmP`, its position as if the arm were
- * hanging straight in the avatar rig's units, so the patterns run along it just as they
- * do on an avatar. About 2.6 units across; centred.
+ * The hand a glove is made to fit, in metres: player.glb's arm is a plain box this wide
+ * (across the body) and this deep (front to back) - the glove goes on over the end of it
+ * like a mitt, so no corner of the hand shows. Avatars whose arms measure differently get
+ * their gloves scaled to fit (avatarRig.placeRubberArms).
  */
-function createFlexGeometry() {
+export const GLOVE_FIT = { width: 0.34, depth: 0.45 }
+
+/**
+ * One boxing glove, in metres, fitted over the end of an arm that runs down -Y from the
+ * shoulder at the origin, the end of the hand at (0, -1, 0) (the frame createRubberArms
+ * poses it in): a padded mitt a little wider and deeper than the hand, rounded off,
+ * covering its last ~30 cm and padded on past the fingers; a cuff band round the wrist;
+ * a front pad over the knuckles; and the thumb along the inner edge, `side` +1: +X. Every
+ * vertex carries `aArmP` (its position in the avatar rig's units, as if hanging, for the
+ * patterns) and `aTrim` (1 on the cuff: painted in the gloves' accent colour). `part`
+ * tags the pieces for the shader (2 glove, 3/4 the thumb for +X/-X); `bothThumbs` adds
+ * the -X thumb too (the worn glove: the shader keeps the one for its arm's side). `low`:
+ * the shop's dozens of pairs seen from across the plaza - rounded only on the mitt and
+ * pad, the cuff and thumb plain blocks. Worn: rounded everywhere, the big pieces more
+ * smoothly (~920 triangles a glove, so a full room of fighters stays cheap).
+ */
+function addGlovePieces(add, side, part, thumbPart, low = false, bothThumbs = false) {
+  const big = low ? 1 : 2
+  const small = 1
+  const m = () => new Matrix4()
+  /** A rounded block - or, on the shop's gloves, a plain one for the small pieces. */
+  const block = (w, h, d, seg, r) => (low && seg === small && r < 0.06 ? new BoxGeometry(w, h, d) : new RoundedBoxGeometry(w, h, d, seg, r))
+  const W = GLOVE_FIT.width + 0.07
+  const D = GLOVE_FIT.depth + 0.07
+  // The mitt: from 7 cm past the fingers to ~31 cm up the hand, its corners well rounded.
+  add(block(W, 0.38, D, big, 0.1), part, m().makeTranslation(0, -0.88, 0), 0)
+  // The knuckle pad, bulging a little past the mitt's front and end.
+  add(block(W - 0.06, 0.2, D * 0.55, big, 0.08), part, m().makeTranslation(0, -0.99, D * 0.2), 0)
+  // The cuff band round the wrist, a touch wider than the mitt.
+  add(block(W + 0.03, 0.1, D + 0.03, small, 0.04), part, m().makeTranslation(0, -0.64, 0), 1)
+  // The thumb: a padded bar along the inner edge, near the front, its tip tucked in.
+  const thumb = (s, p) =>
+    add(block(0.11, 0.24, 0.16, small, 0.05), p, m().makeRotationZ(-0.18 * s).setPosition((W / 2 + 0.02) * s, -0.86, D * 0.22), 0)
+  thumb(side, thumbPart)
+  if (bothThumbs) thumb(-side, thumbPart === 3 ? 4 : 3)
+}
+/**
+ * Builds geometry from pieces placed by addGlovePieces: each piece non-indexed, moved
+ * into place, with `aArmP` (rig-unit position for the patterns: x5, hung from y = 4),
+ * `aPart` and `aTrim`. `extra` transforms the whole result afterwards (aArmP unmoved).
+ */
+function buildPieces(build, extra = null) {
   const pieces = []
-  const m = new Matrix4()
-  const add = (geometry, alongOffset, matrix) => {
-    const g = geometry.toNonIndexed()
-    geometry.dispose()
+  const add = (geometry, part, matrix, trim) => {
+    const g = geometry.index ? geometry.toNonIndexed() : geometry
+    if (g !== geometry) geometry.dispose()
+    g.applyMatrix4(matrix)
+    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name)
     const pos = g.getAttribute('position')
     const armP = new Float32Array(pos.count * 3)
     for (let i = 0; i < pos.count; i += 1) {
-      armP[i * 3] = pos.getX(i)
-      armP[i * 3 + 1] = pos.getY(i) + alongOffset
-      armP[i * 3 + 2] = pos.getZ(i)
+      armP[i * 3] = pos.getX(i) * 5
+      armP[i * 3 + 1] = pos.getY(i) * 5 + 4
+      armP[i * 3 + 2] = pos.getZ(i) * 5
     }
     g.setAttribute('aArmP', new BufferAttribute(armP, 3))
-    g.applyMatrix4(matrix)
+    g.setAttribute('aPart', new BufferAttribute(new Float32Array(pos.count).fill(part), 1))
+    g.setAttribute('aTrim', new BufferAttribute(new Float32Array(pos.count).fill(trim), 1))
+    if (extra) g.applyMatrix4(extra)
     pieces.push(g)
   }
-  // A cuff where it would join the shoulder, then the upper arm out to the elbow, lying
-  // along +X.
-  add(new CylinderGeometry(0.46, 0.46, 0.22, 10, 1), 3.95, new Matrix4().makeRotationZ(Math.PI / 2).setPosition(-0.95, -0.75, 0))
-  add(new CylinderGeometry(0.34, 0.38, 1.3, 10, 1), 3.4, m.makeRotationZ(Math.PI / 2).setPosition(-0.25, -0.75, 0))
-  // The bicep's bulge on top of it.
-  add(new SphereGeometry(0.5, 10, 7), 3.5, new Matrix4().makeScale(1.3, 0.95, 0.95).setPosition(-0.3, -0.38, 0))
-  // Elbow.
-  add(new SphereGeometry(0.37, 8, 6), 2.8, new Matrix4().makeTranslation(0.45, -0.72, 0))
-  // Forearm, standing up from the elbow.
-  add(new CylinderGeometry(0.38, 0.31, 1.15, 10, 1), 2.2, new Matrix4().makeTranslation(0.5, -0.12, 0))
-  // The fist: a chunky block, four knuckles along its top edge curled towards the
-  // shoulder, and a thumb folded across them.
-  add(new BoxGeometry(0.82, 0.74, 0.8, 1, 1, 1), 1.6, new Matrix4().makeTranslation(0.5, 0.74, 0))
-  for (let i = 0; i < 4; i += 1) {
-    add(new SphereGeometry(0.14, 6, 4), 1.2, new Matrix4().makeTranslation(0.1, 1.06, -0.3 + i * 0.2))
+  build(add)
+  const merged = mergeGeometries(pieces, false)
+  for (const piece of pieces) piece.dispose()
+  merged.computeBoundingSphere()
+  return merged
+}
+
+// --- The shop's gloves ---------------------------------------------------------------------
+
+/**
+ * A pair of gloves on display, fists up, leaning together, sized for the shop's stands
+ * (~2.6 units across, centred). Each piece keeps the pattern coordinates of a glove worn
+ * hanging, so a pair looks on its stand just as it does on your hands.
+ */
+function createFlexGeometry() {
+  const pieces = []
+  for (const side of [-1, 1]) {
+    // Turned fist-up, scaled up and leaned in towards its partner.
+    const place = new Matrix4()
+      .makeTranslation(side * 0.82, -0.1, 0)
+      .multiply(new Matrix4().makeRotationZ(-0.22 * side))
+      .multiply(new Matrix4().makeRotationY(-0.35 * side))
+      .multiply(new Matrix4().makeScale(3.6, 3.6, 3.6))
+      .multiply(new Matrix4().makeRotationX(Math.PI))
+      .multiply(new Matrix4().makeTranslation(0, 0.84, 0))
+    pieces.push(buildPieces((add) => addGlovePieces(add, side, 2, side > 0 ? 3 : 4, true), place))
   }
-  add(new BoxGeometry(0.24, 0.24, 0.62, 1, 1, 1), 1.3, new Matrix4().makeRotationY(0.2).setPosition(0.05, 0.72, 0.18))
   const merged = mergeGeometries(pieces, false)
   for (const piece of pieces) piece.dispose()
   merged.computeBoundingSphere()
@@ -372,6 +419,11 @@ function createFlexGeometry() {
 
 let flexGeometry = null
 let displayMaterial = null
+
+const TRIM_GLSL = /* glsl */ `
+  // The cuff and lace in the accent colour, a soft sheen on the leather.
+  armPaint.rgb = mix(armPaint.rgb, vArmC, vTrim);
+`
 
 function getDisplayMaterial() {
   if (displayMaterial) return displayMaterial
@@ -383,11 +435,13 @@ function getDisplayMaterial() {
         '#include <common>',
         `#include <common>
         attribute vec3 aArmP;
+        attribute float aTrim;
         attribute vec3 aArmA;
         attribute vec3 aArmB;
         attribute vec3 aArmC;
         attribute vec2 aArmStyle;
         varying vec3 vArmP;
+        varying float vTrim;
         varying vec3 vArmA;
         varying vec3 vArmB;
         varying vec3 vArmC;
@@ -395,7 +449,7 @@ function getDisplayMaterial() {
       )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvArmP = aArmP; vArmA = aArmA; vArmB = aArmB; vArmC = aArmC; vArmStyle = aArmStyle;',
+        '#include <begin_vertex>\nvArmP = aArmP; vTrim = aTrim; vArmA = aArmA; vArmB = aArmB; vArmC = aArmC; vArmStyle = aArmStyle;',
       )
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -403,6 +457,7 @@ function getDisplayMaterial() {
         `#include <common>
         uniform float uArmTime;
         varying vec3 vArmP;
+        varying float vTrim;
         varying vec3 vArmA;
         varying vec3 vArmB;
         varying vec3 vArmC;
@@ -413,18 +468,19 @@ function getDisplayMaterial() {
         '#include <map_fragment>',
         `#include <map_fragment>
         vec4 armPaint = armLook(vArmP, vArmStyle.x, vArmA, vArmB, vArmC, vArmStyle.y, uArmTime);
+        ${TRIM_GLSL}
         diffuseColor.rgb = armPaint.rgb;`,
       )
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += armPaint.rgb * armPaint.a * 0.8;')
   }
-  material.customProgramCacheKey = () => 'arm-display-v1'
+  material.customProgramCacheKey = () => 'glove-display-v1'
   displayMaterial = material
   return material
 }
 
 /**
- * Up to `max` floating flexed arms in one draw call. `mesh.setArm(i, id)` dresses
- * instance i as arms `id` (cheap; call once when it changes). The geometry and material
+ * Up to `max` pairs of gloves on display in one draw call. `mesh.setArm(i, id)` paints
+ * instance i as gloves `id` (cheap; call once when it changes). The geometry and material
  * are shared by every display mesh; disposeArmDisplayMesh frees only the instance data.
  */
 export function createArmDisplayMesh(max) {
@@ -460,62 +516,17 @@ export function disposeArmDisplayMesh(mesh) {
   mesh.dispose()
 }
 
-// --- The avatars' rubber arms -----------------------------------------------------------
+// --- The gloves you wear ---------------------------------------------------------------------
 
 /**
- * Rubber arms for an avatar, both in one draw call: each a round, gently tapering rubber
- * tube from a ball at the shoulder down to a cuff at the wrist, ending in a big cartoon
- * hand - palm, four fingers with rounded tips and the thumb on the outside. They replace
- * the avatar's own blocky arms (setArmLook hides those) and are painted as the arms you've
- * equipped, the pattern repeating down the tube however far it stretches.
- *
- * The geometry is one arm in its own frame: the shoulder at the origin, the tube running
- * down to y = -1 and the hand hung below that, palm forward, fingers down. Per instance,
- * `aArmPose` (length in metres, wrist bend, side) is applied in the vertex shader: the
- * tube stretches to the length and thins as it goes, the hand rides on its end without
- * stretching, bent back at the wrist by `bend` (so dragged along the floor it lies flat,
- * palm down, fingers trailing), and only the thumb for that side (+1: +X) is kept.
- * Parts: 0 shoulder ball, 1 tube, 2 hand, 3 the +X thumb, 4 the -X thumb.
+ * One arm's glove in its own frame (shoulder at the origin, the arm down -Y to the wrist
+ * at y = -1), with both thumbs: the shader keeps the one for the arm's side.
  */
 function createRubberArmGeometry() {
-  const pieces = []
-  const add = (geometry, part, matrix) => {
-    const g = geometry.index ? geometry.toNonIndexed() : geometry
-    if (g !== geometry) geometry.dispose()
-    g.applyMatrix4(matrix)
-    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name)
-    const pos = g.getAttribute('position')
-    const armP = new Float32Array(pos.count * 3)
-    for (let i = 0; i < pos.count; i += 1) {
-      armP[i * 3] = pos.getX(i) * 5
-      armP[i * 3 + 1] = pos.getY(i) * 5 + 4
-      armP[i * 3 + 2] = pos.getZ(i) * 5
-    }
-    g.setAttribute('aArmP', new BufferAttribute(armP, 3))
-    g.setAttribute('aPart', new BufferAttribute(new Float32Array(pos.count).fill(part), 1))
-    pieces.push(g)
-  }
-  const m = () => new Matrix4()
-  // Shoulder ball and the tube.
-  add(new SphereGeometry(0.17, 10, 7), 0, m())
-  add(new CylinderGeometry(0.15, 0.12, 1, 12, 1, true), 1, m().makeTranslation(0, -0.5, 0))
-  // The hand: a cuff, the palm, four fingers (the middle two longest) with round tips.
-  add(new CylinderGeometry(0.14, 0.14, 0.07, 10, 1), 2, m().makeTranslation(0, -1.0, 0))
-  add(new BoxGeometry(0.25, 0.22, 0.11), 2, m().makeTranslation(0, -1.13, 0))
-  const lengths = [0.13, 0.16, 0.15, 0.12]
-  for (let i = 0; i < 4; i += 1) {
-    const x = -0.09 + i * 0.06
-    const l = lengths[i]
-    add(new BoxGeometry(0.052, l, 0.085), 2, m().makeTranslation(x, -1.24 - l / 2, 0))
-    add(new SphereGeometry(0.036, 6, 4), 2, m().makeScale(1, 0.8, 1.15).setPosition(x, -1.24 - l, 0))
-  }
-  // The thumbs, one for each side, angled out and down from the palm's edge.
-  for (const side of [1, -1]) {
-    add(new BoxGeometry(0.065, 0.14, 0.08), side > 0 ? 3 : 4, m().makeRotationZ(-0.65 * side).setPosition(0.15 * side, -1.15, 0.01))
-  }
-  const merged = mergeGeometries(pieces, false)
-  for (const piece of pieces) piece.dispose()
-  return merged
+  return buildPieces((add) => {
+    // The +X thumb is part 3, the -X thumb part 4; the shader drops the other side's.
+    addGlovePieces(add, 1, 2, 3, false, true)
+  })
 }
 
 let rubberArmGeometry = null
@@ -524,16 +535,19 @@ let rubberArmMaterial = null
 const RUBBER_VERTEX_HEAD = /* glsl */ `
   attribute vec3 aArmP;
   attribute float aPart;
+  attribute float aTrim;
   attribute vec3 aArmA;
   attribute vec3 aArmB;
   attribute vec3 aArmC;
   attribute vec2 aArmStyle;
   attribute vec3 aArmPose;
   varying vec3 vArmP;
+  varying float vTrim;
   varying vec3 vArmA;
   varying vec3 vArmB;
   varying vec3 vArmC;
   varying vec2 vArmStyle;
+  varying float vCharge;
 `
 
 const RUBBER_VERTEX_SHAPE = /* glsl */ `
@@ -541,25 +555,24 @@ const RUBBER_VERTEX_SHAPE = /* glsl */ `
   vec3 armPos = position;
   vec3 objectNormal = normal;
   vArmP = aArmP;
-  if (aPart > 0.5 && aPart < 1.5) {
-    // The tube: stretched to length, thinner the longer, the pattern repeating down it.
-    armPos.xz *= clamp(sqrt(0.63 / armLen), 0.5, 1.15);
-    armPos.y *= armLen;
-    vArmP.y = (aArmP.y - 4.0) * max(1.0, armLen / 0.63) + 4.0;
-  } else if (aPart > 1.5) {
-    // The hand on the wrist: only this side's thumb, bent back at the wrist by aArmPose.y.
-    if ((aPart > 2.5 && aPart < 3.5 && aArmPose.z < 0.0) || (aPart > 3.5 && aArmPose.z > 0.0)) armPos = vec3(0.0, -1.0, 0.0);
-    vec3 h = armPos - vec3(0.0, -1.0, 0.0);
-    float bc = cos(aArmPose.y);
-    float bs = sin(aArmPose.y);
-    h = vec3(h.x, h.y * bc - h.z * bs, h.z * bc + h.y * bs);
-    objectNormal = vec3(objectNormal.x, objectNormal.y * bc - objectNormal.z * bs, objectNormal.z * bc + objectNormal.y * bs);
-    armPos = vec3(0.0, -armLen, 0.0) + h;
-  }
+  vTrim = aTrim;
+  // The glove rides on the end of the arm, however long it is; only this side's thumb.
+  if ((aPart > 2.5 && aPart < 3.5 && aArmPose.z < 0.0) || (aPart > 3.5 && aArmPose.z > 0.0)) armPos = vec3(0.0, -1.0, 0.0);
+  armPos = vec3(0.0, -armLen, 0.0) + (armPos - vec3(0.0, -1.0, 0.0));
   vArmA = aArmA;
   vArmB = aArmB;
   vArmC = aArmC;
   vArmStyle = aArmStyle;
+  vCharge = aArmPose.y;
+`
+
+/**
+ * A punch charging in the glove (`vCharge` 0-1): it lights up from inside in its own
+ * colour, warming towards white, brightest round its edges - a glow on the glove itself.
+ */
+const CHARGE_GLSL = /* glsl */ `
+  float chargeRim = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+  totalEmissiveRadiance += mix(armPaint.rgb, vec3(1.0, 0.93, 0.72), 0.45) * vCharge * (0.3 + 1.5 * chargeRim * chargeRim);
 `
 
 function getRubberArmMaterial() {
@@ -577,30 +590,35 @@ function getRubberArmMaterial() {
         `#include <common>
         uniform float uArmTime;
         varying vec3 vArmP;
+        varying float vTrim;
         varying vec3 vArmA;
         varying vec3 vArmB;
         varying vec3 vArmC;
         varying vec2 vArmStyle;
+        varying float vCharge;
         ${ARM_GLSL}`,
       )
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
         vec4 armPaint = armLook(vArmP, vArmStyle.x, vArmA, vArmB, vArmC, vArmStyle.y, uArmTime);
+        ${TRIM_GLSL}
         diffuseColor.rgb = armPaint.rgb;`,
       )
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += armPaint.rgb * armPaint.a * 0.8;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance += armPaint.rgb * armPaint.a * 0.8;\n${CHARGE_GLSL}`)
   }
-  material.customProgramCacheKey = () => 'arm-rubber-v1'
+  material.customProgramCacheKey = () => 'glove-worn-v2'
   rubberArmMaterial = material
   return material
 }
 
 /**
- * One avatar's pair of rubber arms (instance 0 left, 1 right). `setArm(id)` paints both as
- * arms `id` (a no-op when unchanged); `setPose(i, length, bend, side)` shapes one (see
- * createRubberArmGeometry). Placed each frame by avatarRig.placeRubberArms. The arm's
- * shape and the material are shared by every avatar; disposeRubberArms frees the rest.
+ * One avatar's pair of boxing gloves (instance 0 left, 1 right). `setArm(id)` paints both
+ * as gloves `id` (a no-op when unchanged); `setPose(i, length, bend, side)` puts one on
+ * the end of an arm `length` long (see createRubberArmGeometry; `bend` is unused);
+ * `setCharge(i, amount)` lights glove i up with a punch charging in it (0-1). Placed
+ * each frame by avatarRig.placeRubberArms. The glove's shape and the material are shared
+ * by every avatar; disposeRubberArms frees the rest.
  */
 export function createRubberArms() {
   rubberArmGeometry ??= createRubberArmGeometry()
@@ -617,6 +635,7 @@ export function createRubberArms() {
   const aPose = attr('aArmPose', 3)
   const mesh = new InstancedMesh(geometry, getRubberArmMaterial(), 2)
   mesh.frustumCulled = false
+  mesh.castShadow = true
   let painted = null
   mesh.setArm = (id) => {
     if (id === painted) return
@@ -633,8 +652,15 @@ export function createRubberArms() {
     aC.needsUpdate = true
     aStyle.needsUpdate = true
   }
+  const charge = [0, 0]
   mesh.setPose = (i, length, bend, side) => {
-    aPose.setXYZ(i, length, bend, side)
+    aPose.setXYZ(i, length, charge[i], side)
+    aPose.needsUpdate = true
+  }
+  mesh.setCharge = (i, amount) => {
+    if (Math.abs(amount - charge[i]) < 0.002) return
+    charge[i] = amount
+    aPose.setY(i, amount)
     aPose.needsUpdate = true
   }
   return mesh

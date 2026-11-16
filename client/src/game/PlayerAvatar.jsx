@@ -9,19 +9,23 @@ import {
   baseBodyUrl,
   isRealId,
   PART_SLOTS,
-  skinCompositeUrl,
+  skinTextureUrlFor,
   skinIdOrDefault,
-  WORN_SLOTS,
+  wornSlots,
 } from '../bloxity/avatarAssets'
 import { loadCharacterGLB, loadOBJ, loadPartGLB, loadTexture } from '../bloxity/avatarLoader'
+import { canDress, dressRig, outfitKeyFor } from '../bloxity/characterKit'
 import { getSDK, safeCall } from '../bloxity/sdk'
 import { useBloxity } from '../bloxity/BloxityContext'
 import { getEmoteClip, updateLocalEmote } from '../bloxity/emotes'
 import { shareLook } from '../net/connection'
 import { getGame } from '../store/game'
+import { runtime } from './runtime'
 import { createRubberArms, disposeRubberArms, setArmLook } from './armStyles'
+import { createBelt } from './belt'
 import {
   animateRig,
+  attachBelt,
   applyPart,
   applyProportions,
   applySkin,
@@ -85,7 +89,7 @@ function fallbackMotion(delta) {
  *   painted to match (armStyles.js) - the starter Noodle Arms keep the avatar's own skin.
  */
 export const BloxityAvatar = forwardRef(function BloxityAvatar(
-  { equipped, proportions, onReady, onStep, targetHeight = 1.8, motionRef, handRef, emoteSource, armsId, local = false, ...props },
+  { equipped, proportions, onReady, onStep, targetHeight = 1.8, motionRef, handRef, emoteSource, armsId, beltRebirths, local = false, ...props },
   ref,
 ) {
   // three's own GLTFLoader (the one the cosmetics use too), not drei's useGLTF, which
@@ -96,6 +100,14 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
   const bodyRef = useRef(null)
   /** Their own uploaded character, once loaded: { info, scene }; null = player.glb. */
   const custom = useCustomCharacter(equipped, local)
+  // Boxity's character kit dresses the rig when it's switched on (bloxity/characterKit):
+  // the whole look from one outfit key. Otherwise - or if it can't - the assembly below.
+  const outfitKey = useMemo(() => (custom ? null : outfitKeyFor(equipped, proportions, local)), [custom, equipped, proportions, local])
+  /** The outfit key the kit failed to dress (then this look is drawn by hand). */
+  const [kitFailedFor, setKitFailedFor] = useState(null)
+  const useKit = Boolean(outfitKey) && canDress(outfitKey) && kitFailedFor !== outfitKey
+  /** The kit's handle on this rig, while it dresses it: { handle, rig }. */
+  const kitRef = useRef(null)
 
   // The GLTF cache hands back one shared scene. Clone via SkeletonUtils so this
   // instance gets an independent, still-working skeleton.
@@ -134,8 +146,59 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
     return { scale, footOffset: -box.min.y * scale }
   }, [baseScene, targetHeight])
 
-  // --- Assemble equipped cosmetics --------------------------------------------
+  // --- Dressed by the character kit ------------------------------------------------
   useEffect(() => {
+    if (!useKit) {
+      // Switched off (or failed): take its outfit off; the assembly below takes over.
+      if (kitRef.current) {
+        safeDispose(kitRef.current.handle)
+        kitRef.current = null
+      }
+      return undefined
+    }
+    let cancelled = false
+    const dress = async () => {
+      const current = kitRef.current
+      if (current && current.rig === rig) {
+        // A new look on a rig already dressed: the kit swaps the outfit itself.
+        const ok = await current.handle.update(outfitKey)
+        if (!ok && !cancelled) setKitFailedFor(outfitKey)
+        return
+      }
+      const handle = await dressRig(character, outfitKey)
+      if (cancelled) {
+        safeDispose(handle)
+        return
+      }
+      if (!handle) {
+        setKitFailedFor(outfitKey)
+        return
+      }
+      kitRef.current = { handle, rig }
+      setAssembled(true)
+    }
+    dress().catch((err) => {
+      console.warn('[bloxity] character kit failed', err)
+      if (!cancelled) setKitFailedFor(outfitKey)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [useKit, outfitKey, rig, character])
+  useEffect(
+    () => () => {
+      if (kitRef.current?.rig === rig) {
+        safeDispose(kitRef.current.handle)
+        kitRef.current = null
+      }
+    },
+    [rig],
+  )
+
+  // --- Assemble equipped cosmetics (when the kit isn't dressing the rig) -----------
+  useEffect(() => {
+    // While the kit dresses the rig, its parts, skin and accessories are left alone.
+    if (useKit) return undefined
     let cancelled = false
     const holder = bodyRef
     // Accessories are re-attached on every rebuild; track them so the previous
@@ -156,11 +219,11 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       // Skin always loads - "0" is the fallback, since the base body has no baked map.
       // With a face, shirt or pants worn it's the server-composited version; if that
       // can't be fetched, the bare skin is better than an untextured body.
-      const compositeUrl = skinCompositeUrl(equipped)
+      const skinUrl = skinTextureUrlFor(equipped)
       const plainSkinUrl = assetUrls.skinTexture(skinIdOrDefault(equipped?.skinId))
       jobs.push(
-        (compositeUrl ? loadTexture(compositeUrl) : Promise.resolve(null))
-          .then((texture) => texture || loadTexture(plainSkinUrl))
+        loadTexture(skinUrl)
+          .then((texture) => texture || (skinUrl !== plainSkinUrl ? loadTexture(plainSkinUrl) : null))
           .then((texture) => ({ kind: 'skin', texture })),
       )
 
@@ -181,13 +244,14 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       }
     }
 
-    // Everything worn: hat, hair and mask together, back, neck, chest, waist, hands, shoes.
-    for (const [slot, cfg] of Object.entries(WORN_SLOTS)) {
+    // Everything worn: hat and back, then every slot Boxity lists (hair, mask, neck,
+    // chest, waist, hands, shoes - and any added later): avatarAssets.wornSlots.
+    for (const cfg of wornSlots()) {
       const id = equipped?.[cfg.idKey]
       if (!isRealId(id)) continue
       jobs.push(
         Promise.all([loadOBJ(cfg.mesh(id)), loadTexture(cfg.texture(id))]).then(
-          ([object, texture]) => ({ kind: 'accessory', accessory: slot, object, texture }),
+          ([object, texture]) => ({ kind: 'accessory', accessory: cfg, object, texture }),
         ),
       )
     }
@@ -256,7 +320,7 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
         })
       }
     }
-  }, [rig, equipped, onStep, custom, baseRest])
+  }, [rig, equipped, onStep, custom, baseRest, useKit])
 
   // Frees what this avatar made when it goes (other players come and go). Loaded
   // part scenes and textures are shared through the loader cache, so they stay.
@@ -284,6 +348,15 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
   const wantsArms = Boolean(armsId)
   const rubberArms = useMemo(() => (wantsArms ? createRubberArms() : null), [wantsArms])
   useEffect(() => () => rubberArms && disposeRubberArms(rubberArms), [rubberArms])
+  /** The karate belt round the waist (belt.js), for a game avatar (`beltRebirths`). */
+  const wantsBelt = Boolean(beltRebirths)
+  const belt = useMemo(() => (wantsBelt ? createBelt() : null), [wantsBelt])
+  useEffect(() => {
+    if (!belt) return undefined
+    attachBelt(rig, belt)
+    return () => belt.parent?.remove(belt)
+  }, [belt, rig])
+  useEffect(() => () => belt?.disposeBelt(), [belt])
 
   useFrame((_state, delta) => {
     try {
@@ -300,10 +373,20 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       if (handRef?.current) placeHand(rig, handRef.current)
       if (armsId) {
         const id = armsId()
-        // Rubber arms instead of the blocky ones (not on a custom character).
-        const shown = rubberArms ? placeRubberArms(rig, rubberArms, !custom) : false
+        // Your gloves (glove look: armStyles.js).
+        // The gloves, on the ends of the avatar's own arms (placeRubberArms hides them on
+        // a rig without those bones).
+        // Your own right glove lights up as you charge a punch (roll/FistCharge.jsx).
+        if (rubberArms) {
+          placeRubberArms(rig, rubberArms, true, fit.scale)
+          rubberArms.setCharge(1, local ? runtime.player.charge : 0)
+        }
         rubberArms?.setArm(id)
-        setArmLook(bodyRef.current?.material, id, shown)
+        setArmLook(bodyRef.current?.material, id, false)
+      }
+      if (belt && beltRebirths) {
+        belt.setBelt(beltRebirths())
+        belt.tick(motion.time ?? 0)
       }
     } catch {
       // A malformed payload must not kill the render loop.
@@ -345,12 +428,15 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(props, ref) {
       onStep={game.loadingStep}
       emoteSource={updateLocalEmote}
       armsId={yourArms}
+      beltRebirths={yourBelt}
     />
   )
 })
 
-/** The arms you've equipped, for your avatar's paint. */
+/** The gloves you've equipped, for your avatar's hands. */
 const yourArms = () => getGame().profile.equippedTire
+/** Your rebirths: the belt you wear. */
+const yourBelt = () => getGame().profile.rebirths
 
 /** The SDK's characterAccessoryMatrix(character, bone), or null on an SDK without it. */
 function characterAccessoryMatrix() {
@@ -393,3 +479,12 @@ function useCustomCharacter(equipped, local) {
 useLoader.preload(GLTFLoader, baseBodyUrl())
 
 export default PlayerAvatar
+
+/** Takes a character kit outfit off (bloxity/characterKit), never throwing. */
+function safeDispose(handle) {
+  try {
+    handle?.dispose?.()
+  } catch (err) {
+    console.warn('[bloxity] character kit dispose failed', err)
+  }
+}

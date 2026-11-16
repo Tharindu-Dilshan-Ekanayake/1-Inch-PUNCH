@@ -118,24 +118,24 @@ export function buildBeach(blocks, props, { density = 1 } = {}) {
   }
   for (const x of some ? [-40, -20, 20, 40] : [-30, 30]) palm(x, 0, 41, 7 + (x > 0 ? 1 : 0), 1.6 + x * 0.01)
 
-  // Umbrellas and deck chairs on the sideline aprons: south-east by the end zone, west
-  // between the ball shop and the eggs.
+  // Umbrellas and deck chairs on the sideline aprons: south-west by the end zone, east
+  // between the glove shop and the eggs.
   const umbrellas = [
-    [31, 32, CORAL, 0.3],
-    [39, 31, TURQUOISE, 2.2],
-    [-31, 17, TURQUOISE, -0.4],
-    [-40, 17.5, CORAL, 2.8],
+    [-31, 32, CORAL, 0.3],
+    [-39, 31, TURQUOISE, 2.2],
+    [31, 17, TURQUOISE, -0.4],
+    [40, 17.5, CORAL, 2.8],
   ]
   for (const [x, z, color, turn] of full ? umbrellas : umbrellas.slice(0, 2)) addUmbrella(blocks, props, x, z, color, turn)
 
   // Surfboards stuck in the sand behind the treadmills' tracks, and by the umbrellas.
   const boards = [
-    [47.5, 20.5, CORAL],
-    [47.5, 6.5, TURQUOISE],
-    [47.5, -7.5, '#ffd27a'],
-    [47.5, -21.5, CORAL],
-    [44.5, 33.5, TURQUOISE],
-    [-35, 19.5, '#ffd27a'],
+    [-47.5, 20.5, CORAL],
+    [-47.5, 6.5, TURQUOISE],
+    [-47.5, -7.5, '#ffd27a'],
+    [-47.5, -21.5, CORAL],
+    [-44.5, 33.5, TURQUOISE],
+    [35, 19.5, '#ffd27a'],
   ]
   for (const [x, z, color] of some ? boards : boards.slice(0, 3)) addSurfboard(props, x, z, color, 0.4)
 

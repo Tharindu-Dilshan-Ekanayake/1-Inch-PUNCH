@@ -9,6 +9,7 @@ import { useGame } from '../store/game'
 import { RENDER_SCALES, useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
 import BlobShadows from './BlobShadows'
+import ClickPunch from './ClickPunch'
 import FollowCamera from './FollowCamera'
 import GainFX from './fx/GainFX'
 import WorldLabels from './labels/WorldLabels'
@@ -31,7 +32,7 @@ import ShaderWarmup from './ShaderWarmup'
 import { FOG, SKY } from './sceneStyle'
 import Sky from './Sky'
 import World from './world/World'
-import LaunchReach from './world/LaunchReach'
+import TrainingBags from './world/TrainingBags'
 import { showLobbySky } from './worldLook'
 
 // r3f-perf is a dev-only overlay (?perf in the URL). The DEV check is static, so the
@@ -250,7 +251,7 @@ export function GameScene({ onReady }) {
         <WorldSky world={world} />
         <Lighting />
         <World />
-        <LaunchReach />
+        <TrainingBags />
         <WorldLabels />
         <TireShop />
         <EggDisplays />
@@ -274,6 +275,7 @@ export function GameScene({ onReady }) {
         )}
 
         <FollowCamera />
+        <ClickPunch />
         <ShaderWarmup onDone={handleWarmedUp} />
         {warmedUp && <FirstFrameSignal onFirstFrame={handleFirstFrame} />}
         <PerfProbe />

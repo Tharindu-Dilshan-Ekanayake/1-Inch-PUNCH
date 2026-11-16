@@ -368,34 +368,6 @@ canvas {
   animation: pp-bump 0.35s ease-out;
 }
 
-/* The speed tunnel (HUD.jsx): streaks round the edges rushing outwards, centre clear. */
-.pp-tunnel {
-  inset: -15%;
-  background: repeating-conic-gradient(
-    from 0deg at 50% 50%,
-    transparent 0deg 2.6deg,
-    rgba(255, 255, 255, 0.55) 2.9deg 3.3deg,
-    transparent 3.6deg 5.1deg,
-    rgba(255, 255, 255, 0.3) 5.3deg 5.6deg,
-    transparent 5.9deg 8deg
-  );
-  -webkit-mask-image: radial-gradient(ellipse 60% 55% at 50% 50%, transparent 45%, #000 100%);
-  mask-image: radial-gradient(ellipse 60% 55% at 50% 50%, transparent 45%, #000 100%);
-  animation: pp-tunnel 0.22s linear infinite;
-}
-@keyframes pp-tunnel {
-  from {
-    transform: scale(1) rotate(0deg);
-  }
-  to {
-    transform: scale(1.12) rotate(1.4deg);
-  }
-}
-/* The blur down the sides: a soft white haze thickening towards the edges. */
-.pp-tunnel-haze {
-  background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, rgba(255, 255, 255, 0.28) 85%, rgba(255, 255, 255, 0.5) 100%);
-}
-
 /*
  * The KICK! button breathes a green glow, so it reads as the thing to press. The glow is
  * its own layer whose opacity alone is animated - the compositor runs that without the
@@ -435,7 +407,7 @@ canvas {
   visibility: visible;
 }
 .pp-perfect-on .pp-perfect-flash {
-  background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 236, 160, 0.6) 35%, rgba(255, 160, 40, 0) 75%);
+  background: radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 236, 160, 0.2) 30%, rgba(255, 160, 40, 0) 60%);
   animation: pp-perfect-flash 0.45s ease-out forwards;
 }
 @keyframes pp-perfect-flash {
@@ -456,7 +428,7 @@ canvas {
  */
 .pp-perfect-rays {
   left: 50%;
-  top: 42%;
+  top: 21%;
   width: 60vmax;
   height: 60vmax;
   margin: -30vmax 0 0 -30vmax;
@@ -475,19 +447,19 @@ canvas {
     transform: rotate(0deg) scale(1.1);
   }
   12% {
-    opacity: 1;
-    transform: rotate(12deg) scale(2.8);
+    opacity: 0.7;
+    transform: rotate(12deg) scale(1.5);
   }
   70% {
-    opacity: 0.85;
+    opacity: 0.5;
   }
   100% {
     opacity: 0;
-    transform: rotate(70deg) scale(3.2);
+    transform: rotate(50deg) scale(1.7);
   }
 }
 .pp-perfect-stack {
-  top: 30%;
+  top: 13%;
   transform: translateX(-50%);
 }
 /* Rasterized once and then only moved and faded by the GPU while they animate. */
@@ -580,4 +552,105 @@ canvas {
     opacity: 0;
     transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.1) rotate(220deg);
   }
+}
+
+/*
+ * A hidden technique's cut-in (SecretCutIn.jsx): mounted for ~1.8 s. The picture dims a
+ * little at the edges and a band in the technique's colours sweeps in across the middle,
+ * edged in light, a shine running along it; its name sits on the band.
+ */
+.pp-secret-dim {
+  background: radial-gradient(ellipse at 50% 42%, rgba(8, 6, 24, 0.12) 0%, rgba(8, 6, 24, 0.58) 85%);
+  animation: pp-secret-dim 1.85s ease-out forwards;
+}
+@keyframes pp-secret-dim {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.pp-secret-band {
+  left: -15%;
+  right: -15%;
+  top: 41%;
+  height: 19vh;
+  margin-top: -9.5vh;
+  overflow: hidden;
+  will-change: transform, opacity;
+  background: linear-gradient(90deg, transparent 0%, var(--c2) 16%, var(--c1) 50%, var(--c2) 84%, transparent 100%);
+  border-top: 4px solid;
+  border-bottom: 4px solid;
+  border-image: linear-gradient(90deg, transparent 4%, rgba(255, 255, 255, 0.95) 22%, rgba(255, 255, 255, 0.95) 78%, transparent 96%) 1;
+  animation: pp-secret-band 1.85s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+@keyframes pp-secret-band {
+  0% { opacity: 0; transform: translateX(-100%) skewY(-4deg); }
+  14% { opacity: 0.9; transform: translateX(0) skewY(-4deg); }
+  84% { opacity: 0.9; transform: translateX(1.5%) skewY(-4deg); }
+  100% { opacity: 0; transform: translateX(60%) skewY(-4deg); }
+}
+/* The shine running along the band once it's in. */
+.pp-secret-shine {
+  top: 0;
+  bottom: 0;
+  width: 18%;
+  left: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  opacity: 0;
+  animation: pp-secret-shine 1.85s ease-in-out forwards;
+}
+@keyframes pp-secret-shine {
+  0%, 16% { opacity: 0; transform: translateX(-20%); }
+  22% { opacity: 1; }
+  52% { opacity: 1; transform: translateX(560%); }
+  56%, 100% { opacity: 0; transform: translateX(560%); }
+}
+.pp-secret-flash {
+  background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.2) 30%, rgba(255, 255, 255, 0) 65%);
+  animation: pp-perfect-flash 0.5s ease-out forwards;
+}
+.pp-secret-stack {
+  transform: translateX(-50%);
+}
+.pp-secret-kicker {
+  animation: pp-secret-kicker 1.85s ease-out forwards;
+}
+@keyframes pp-secret-kicker {
+  0% { opacity: 0; transform: translateY(-60%) scale(0.6); }
+  12% { opacity: 1; transform: translateY(0) scale(1.08); }
+  20% { transform: scale(1); }
+  85% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: translateY(-30%) scale(0.9); }
+}
+.pp-secret-name {
+  white-space: nowrap;
+  animation: pp-secret-name 1.85s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+@keyframes pp-secret-name {
+  0% { opacity: 0; transform: scale(3.2); }
+  14% { opacity: 1; transform: scale(0.92); }
+  22% { transform: scale(1.04) rotate(-1.5deg); }
+  30% { transform: scale(1) rotate(0deg); }
+  85% { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
+.pp-secret-badge {
+  opacity: 0;
+  white-space: nowrap;
+  animation: pp-secret-badge 1.85s ease-out forwards;
+}
+.pp-secret-badge-2 {
+  animation-delay: 0.08s;
+}
+@keyframes pp-secret-badge {
+  0% { opacity: 0; transform: translateY(60%) scale(0.5); }
+  22% { opacity: 0; transform: translateY(60%) scale(0.5); }
+  32% { opacity: 1; transform: translateY(0) scale(1.12); }
+  40% { transform: scale(1); }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pp-secret-band,
+  .pp-secret-shine { animation-duration: 0.01s; }
 }

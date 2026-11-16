@@ -2,7 +2,7 @@ import { reportedAnim } from '../bloxity/emotes'
 import { environment } from '../bloxity/env'
 import { GAME_SLUG, joinToken } from '../bloxity/identity'
 import { getSDK, safeCall, waitForSDK } from '../bloxity/sdk'
-import { LAUNCH_STAND } from '@shared/world'
+import { LAUNCH_STAND, punchSpotX } from '@shared/world'
 
 import { meterAtZ } from '../game/roll/path'
 import { runtime } from '../game/runtime'
@@ -10,7 +10,7 @@ import { getGame } from '../store/game'
 import { setTransport } from './actions'
 import { handleServerEvent } from './events'
 import { createLocalServer } from './localServer'
-import { clearRemotePlayers, removeRemotePlayer, upsertRemotePlayer } from './remotePlayers'
+import { clearRemotePlayers, remotePlayers, removeRemotePlayer, upsertRemotePlayer } from './remotePlayers'
 
 /** Position reports per second (the server validates each against the last). */
 const POSITION_HZ = 10
@@ -64,7 +64,7 @@ async function findDevServer() {
   for (const port of DEV_PORTS) candidates.push(`${window.location.protocol}//${window.location.hostname}:${port}`)
   for (const url of new Set(candidates)) {
     const health = await healthOf(url)
-    if (health?.ok && health.game === '1-arm-length') return url
+    if (health?.ok && health.game === '1-inch-punch') return url
   }
   return null
 }
@@ -229,17 +229,16 @@ function attachRoom(room, identity, Callbacks, endpoint, gen) {
         getGame().setLeaderboards(payload)
         break
       case 'ghostRoll':
-        // Never your own launch (you're flying already), and only launches down your
-        // world's runway. Their avatar replays it (remote/): from the launch posts, as far
-        // back as they'd walked.
+        // Never your own punch (you're smashing already), and only punches down your
+        // world's runway. Their avatar replays it (remote/) from their spot on the punch
+        // line - after its hidden technique's cut-in, if it had one.
         if (payload.sid === room.sessionId) break
         if ((payload.world || 0) !== (getGame().profile.world || 0)) break
         runtime.ghostRolls.set(payload.sid, {
           ...payload,
           fromMeter: meterAtZ(LAUNCH_STAND.z),
-          startX: LAUNCH_STAND.x,
-          pull: Math.max(0, payload.z - LAUNCH_STAND.z),
-          startedAt: performance.now(),
+          startX: punchSpotX(remotePlayers.get(payload.sid)?.position.x ?? 0),
+          startedAt: performance.now() + (Number(payload.hold) || 0) * 1000,
         })
         break
       case 'kicked':

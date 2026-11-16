@@ -1,7 +1,7 @@
-import { EGGS, PADS, PETS, RARITIES, SHOP, TIRES, WORLD_PORTALS, WORLDS } from '@shared/balance'
+import { EGGS, PADS, PETS, RARITIES, SHOP, TIRES, WALL_FIRST, WORLD_PORTALS, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { isPadUnlocked } from '@shared/logic'
-import { EGG_STANDS, FREE_REWARD, LAUNCH_STAND, padCenterZ, PORTALS, SPHINX_STAND, STRETCH_LANE, TABLE_X, TIRE_STANDS } from '@shared/world'
+import { EGG_STANDS, FREE_REWARD, LAUNCH_STAND, PAD_SIDE, padCenterZ, PORTALS, SPHINX_STAND, TABLE_X, TIRE_STANDS, TRACK_START_Z } from '@shared/world'
 
 import { eggHeight } from '../world/eggs'
 import { BOARD_BOTTOM, BOARD_HEIGHT, PAD_THEMES } from '../world/structures'
@@ -68,7 +68,7 @@ export function padLabels(profile) {
     // Well in front of the treadmill's backboard (structures.js), centred on it: the label
     // turns to face the camera and is wider than the board, so any nearer and its far half
     // swings behind the board seen from an angle.
-    position: [TABLE_X - 2.2, BOARD_BOTTOM + BOARD_HEIGHT / 2, padCenterZ(i)],
+    position: [TABLE_X - PAD_SIDE * 2.2, BOARD_BOTTOM + BOARD_HEIGHT / 2, padCenterZ(i)],
     spec: padLabelSpec(i, isPadUnlocked(profile, i), profile.world || 0),
     reserve: padReserve(i),
     fade: 150,
@@ -196,8 +196,8 @@ const scoreboardLabel = () => ({
   position: [SCOREBOARD.x, SCOREBOARD.y + 0.8 + SCOREBOARD.height / 2, SCOREBOARD.z - 1.5],
   spec: {
     lines: [
-      { text: '+1 ARM LENGTH', size: 100, gradient: TEXT.gold },
-      { text: 'STRETCH - FLY FAR - REBIRTH', size: 44, gradient: TEXT.white },
+      { text: '+1 DOJO PUNCH', size: 100, gradient: TEXT.gold },
+      { text: 'TRAIN - SMASH WALLS - EARN YOUR BELT', size: 44, gradient: TEXT.white },
     ],
     pxPerUnit: 34,
   },
@@ -212,7 +212,7 @@ const freeRewardLabel = () => ({
 })
 
 /**
- * Where the portal goes: Palm Beach (and what opens it - rebirths and Wins - until it's
+ * Where the portal goes: the Bamboo Temple (and what opens it - rebirths and Wins - until it's
  * open), or home.
  */
 const portalLabel = (profile) => (portal) => {
@@ -245,18 +245,18 @@ const portalLabel = (profile) => (portal) => {
   }
 }
 
-/** Over the far end of the stretch lane: what walking further back gets you. */
+/** Over the first wall, beyond the punch spot: what your Power does to it. */
 const laneLabel = () => ({
-  id: 'stretch-lane',
-  position: [LAUNCH_STAND.x, 4.4, STRETCH_LANE.maxZ],
+  id: 'power-wall',
+  position: [LAUNCH_STAND.x, 9.6, TRACK_START_Z - WALL_FIRST],
   spec: {
     lines: [
-      { text: 'STRETCH LANE', size: 60, gradient: TEXT.gold },
-      { text: 'Longer arms = FLY FARTHER!', size: 40, gradient: TEXT.white },
+      { text: 'POWER WALLS', size: 64, gradient: TEXT.gold },
+      { text: 'More Power = SMASH FURTHER!', size: 40, gradient: TEXT.white },
     ],
     pxPerUnit: 52,
   },
-  fade: 120,
+  fade: 140,
 })
 
 /** Every label in the lobby. */
